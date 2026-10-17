@@ -1,0 +1,26 @@
+# Maven / IDE 构建产物
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+
+# 日志
+*.log
+logs/
+
+# 敏感：本地配置含真实 API key，不提交
+agent-runtime-demo/src/main/resources/application-local.yml
+
+# OS
+.DS_Store
+Thumbs.db

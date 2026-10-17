@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentruntime</groupId>
+        <artifactId>spring-ai-agent-runtime</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agent-runtime-observability</artifactId>
+    <name>Agent Runtime Observability</name>
+    <description>
+        Cognitive observability: Span + Event tree (Session/Turn/ModelCall/ToolCall),
+        Thinking/ToolIO/Error events, native persistence (default same DB, independent
+        schema; pluggable to ClickHouse/Elasticsearch) and OpenTelemetry/OTLP export.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <!-- JDBC for span/event persistence (agent_runtime_obs schema) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <!-- OpenTelemetry SDK (for OTLP export) will be added when the observability
+             subsystem is implemented; kept out of the skeleton to avoid extra resolution. -->
+    </dependencies>
+
+</project>

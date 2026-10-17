@@ -1,0 +1,14 @@
+# 复制本文件为 application-local.yml，填入你的网关配置后启用 local profile 启动。
+# application-local.yml 含真实 key，建议加进 .gitignore 不提交。
+spring:
+  ai:
+    openai:
+      # 支持任意 OpenAI 协议兼容网关（国内各家大模型网关基本都兼容）。
+      api-key: sk-替换成你的key
+      # Spring AI 1.0.0-M6 会自行追加 /v1/chat/completions，这里不要再带末尾的 /v1，
+      # 否则会请求到 .../v1/v1/chat/completions 并得到 404。
+      base-url: https://替换成你的网关
+      chat:
+        options:
+          # 主模型：用于真正的问答生成
+          model: 替换成你的模型名

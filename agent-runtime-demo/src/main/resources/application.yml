@@ -1,0 +1,27 @@
+spring:
+  # PostgreSQL (the agent_* schema is created by Flyway from the memory module)
+  datasource:
+    url: jdbc:postgresql://localhost:5432/agent_runtime
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  # Flyway: migrations live in the memory module at classpath:db/agent-runtime
+  flyway:
+    enabled: true
+    locations: classpath:db/agent-runtime
+  # Redis (write FIFO queue, distributed lock, session seq)
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  # OpenAI-compatible ChatModel
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:sk-replace-me}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: gpt-4o-mini
+
+server:
+  port: 8080

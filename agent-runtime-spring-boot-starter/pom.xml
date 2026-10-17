@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentruntime</groupId>
+        <artifactId>spring-ai-agent-runtime</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agent-runtime-spring-boot-starter</artifactId>
+    <name>Agent Runtime Spring Boot Starter</name>
+    <description>
+        Spring Boot auto-configuration that aggregates every Harness subsystem and wires
+        the default open-source SPI beans. Add this single dependency to a Spring Boot +
+        Spring AI application to enable the Harness layer.
+    </description>
+
+    <dependencies>
+        <!-- All subsystems are optional so users can include only what they need. -->
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-memory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-spill</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-observability</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-capability</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-hil</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- Spring AI (GA): ChatClient / MessageChatMemoryAdvisor live in spring-ai-client-chat (split from spring-ai-core) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

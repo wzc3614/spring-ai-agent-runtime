@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.agentruntime</groupId>
+    <artifactId>spring-ai-agent-runtime</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>Spring AI Agent Runtime</name>
+    <description>
+        A Harness layer on top of Spring AI that keeps a single agent running stably in production:
+        progressive memory compaction, spill guard, cognitive observability, capability hot-plug,
+        parallel tool coordination and human-in-the-loop approval.
+    </description>
+
+    <properties>
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-ai.version>1.0.0</spring-ai.version>
+        <agentruntime.version>${project.version}</agentruntime.version>
+    </properties>
+
+    <modules>
+        <module>agent-runtime-api</module>
+        <module>agent-runtime-core</module>
+        <module>agent-runtime-memory</module>
+        <module>agent-runtime-spill</module>
+        <module>agent-runtime-observability</module>
+        <module>agent-runtime-capability</module>
+        <module>agent-runtime-hil</module>
+        <module>agent-runtime-spring-boot-starter</module>
+        <module>agent-runtime-demo</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring AI BOM -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Internal modules -->
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-api</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-core</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-memory</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-spill</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-observability</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-capability</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-hil</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentruntime</groupId>
+                <artifactId>agent-runtime-spring-boot-starter</artifactId>
+                <version>${agentruntime.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <!-- Spring Milestones: 1.0.0-M6 is a milestone release and normally lives here. -->
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>spring-snapshots</id>
+            <name>Spring Snapshots</name>
+            <url>https://repo.spring.io/snapshot</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+        </repository>
+        <repository>
+            <name>Central Portal Snapshots</name>
+            <id>central-portal-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Test dependencies shared by all modules -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

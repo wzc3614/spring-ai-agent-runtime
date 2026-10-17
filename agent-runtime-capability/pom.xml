@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentruntime</groupId>
+        <artifactId>spring-ai-agent-runtime</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agent-runtime-capability</artifactId>
+    <name>Agent Runtime Capability</name>
+    <description>
+        Capability supply: skill loading (classpath built-in + DB dynamic, DB overrides
+        same-name built-in) and MCP/tool hot-plug driven by a config-center SPI
+        (default Nacos, with Apollo / local-file fallback), with diff refresh and
+        reference-counting delayed close for safe tool retirement.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <!-- MCP client for tool hot-plug -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

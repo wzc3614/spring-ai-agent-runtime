@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentruntime</groupId>
+        <artifactId>spring-ai-agent-runtime</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agent-runtime-memory</artifactId>
+    <name>Agent Runtime Memory</name>
+    <description>
+        Progressive memory compaction: full persistence (write side, read/write split),
+        tool-result micro-compaction, nine-section LLM summary with merge-update, dynamic
+        budget and local token estimator. Also hosts session persistence and Flyway
+        migration scripts for the whole agent_* schema.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentruntime</groupId>
+            <artifactId>agent-runtime-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <!-- Redis: write FIFO queue, distributed lock, session seq -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!-- ChatMemory abstraction comes transitively via agent-runtime-core -> spring-ai-core (M6) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>
