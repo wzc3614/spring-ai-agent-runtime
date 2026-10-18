@@ -15,9 +15,12 @@
  */
 package com.agentruntime.demo;
 
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import reactor.core.publisher.Flux;
 
 /**
  * 演示 REST 端点。
@@ -34,13 +37,31 @@ public class DemoController {
     /**
      * 对话端点。
      *
-     * @param sessionId 会话 ID
-     * @param message   用户消息
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID
+     * @param message    用户消息
      * @return 回复
      */
     @PostMapping("/chat")
-    public String chat(@RequestParam String sessionId, @RequestParam String message) {
-        return agentService.chat(sessionId, message);
+    public String chat(@RequestParam String uid,
+                       @RequestParam String sessionId,
+                       @RequestParam String message) {
+        return agentService.chat(uid, sessionId, message);
+    }
+
+    /**
+     * 流式对话端点（SSE），按 token 增量推送回复。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID
+     * @param message    用户消息
+     * @return 回复 token 流
+     */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> chatStream(@RequestParam String uid,
+                                   @RequestParam String sessionId,
+                                   @RequestParam String message) {
+        return agentService.chatStream(uid, sessionId, message);
     }
 
     /**

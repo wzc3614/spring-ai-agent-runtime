@@ -1,6 +1,7 @@
 # Agent Runtime 待办与状态
 
-> 最后更新：2026-10-17（端到端全通：工具调用+观测 span 树�完整；修 4 个 bug）
+> 最后更新：2026-10-18（ID 模型修正：补 uid + 两层 ID 落地 + 流式 context-propagation；编排原语层记入 TODO 暂缓）
+> 最后更新：2026-10-17（端到端全通：工具调用+观测 span 树完整；修 4 个 bug）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并 demo 验证并行生效）
 > 状态图例：`[ ]` 待办 / `[~]` 进行中 / `[x]` 完成 / `[-]` 暂缓
 
@@ -73,6 +74,24 @@
 - [ ] H5 MySQL 适配验证
 - [-] H6 Kafka/RocketMQ 异步（暂缓，Redis 队列先行）
 - [-] H7 长期记忆 pgvector/Milvus（M6 远期）
+
+### I. 编排原语层（进阶，暂缓 — 详见 `docs/orchestration-design.md` v0.3）
+> 决策（2026-10-18）：本期不做。当前 `AgentRuntime.call/stream` 单轮入口已端到端验证通过，满足近期需求。原语层为多步编排 / 跨 provider 切换 / langchain4j 接入等进阶场景预留，待有明确需求再启动。
+- [-] I1 `TurnScope` / `openTurn(uid, sessionId)` / `instrumentTurn(uid, sessionId, Flux)` — TURN 作用域原语（同步 + 流式对称）
+- [-] I2 `TurnBuilder` / `turn(uid, sessionId)` — 最省事流式入口（一行完成 openTurn + 记忆 advisor + 调用 + FINAL_REPLY + close）
+- [-] I3 `chatFor(sessionId)` — 返回已挂记忆 advisor、绑好 sessionId 的 `ChatClient`（省 advisor 样板）
+- [-] I4 ChatClient 注册表 + `chatClient(name)` — 多 provider 按名取，每个经 `ObservingChatModel` 装饰
+- [-] I5 `call/stream` 内部重构为原语的默认组合（行为不变，代码复用）
+- [-] I6 `ObservingChatModel.stream()` 补流式埋点（MODEL_CALL span 在流式下的开/关 + token 累积）
+- [-] I7 `ensureStarted` 公开 + 并发语义加固（`computeIfAbsent` 或锁，应对用户自调 `openTurn` 的竞态）
+- [-] I8 langchain4j 接入路 1（框架无关服务 + 手动埋点）/ 路 2（model 适配器）
+- [-] I9 `WorkflowTemplate` 脚手架（多 TURN + 记忆 + 事件，样板重复过多再抽）
+
+### J. ID 模型修正（本轮已完成）
+- [x] J1 `AgentRuntime.call/stream` 签名补 `uid`（修复 `agent_session.user_id` 列存在但从不写入的 bug）
+- [x] J2 两层 ID 模型落地：`uid → sessionId`，记忆按 session 共享累积，seq 按 session 作用域（`UNIQUE(session_id, seq)`）
+- [x] J3 流式 context-propagation（`SpanContextHolder` 两参 + `Hooks.enableAutomaticContextPropagation()`），reactor 线程正确恢复 span 上下文
+- [x] J4 demo `/chat/stream` SSE 端点 + 端到端验证（流式 token / TOOL_CALL span 在 reactor 线程落库 / 并行工具起止重叠）
 
 ## 待定决策
 

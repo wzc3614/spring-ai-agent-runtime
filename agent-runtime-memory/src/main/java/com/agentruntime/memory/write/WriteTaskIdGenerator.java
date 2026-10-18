@@ -20,7 +20,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * 写入任务幂等 ID 生成器：sha256(kind|sessionID|turnID|messageSeq) 的十六进制串。
+ * 写入任务幂等 ID 生成器：sha256(kind|sessionId|turnId|messageSeq) 的十六进制串。
+ * 用 sessionId（记忆作用域），seq 按 session 作用域分配，幂等键需与之一致。
  */
 public final class WriteTaskIdGenerator {
 
@@ -31,7 +32,7 @@ public final class WriteTaskIdGenerator {
      * 生成幂等任务 ID。
      *
      * @param kind       写入类型（如消息角色）
-     * @param sessionId  会话 ID
+     * @param sessionId  会话 ID（记忆作用域）
      * @param turnId     本轮 ID
      * @param messageSeq 消息 seq
      * @return sha256 十六进制串

@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 基于 Redis 的会话级 FIFO 写入队列。
+ * 基于 Redis 的会话级 FIFO 写入队列。按 sessionId 分键（记忆按 session 共享）。
  * <ul>
  *   <li>enqueue：RPUSH 队列 + SADD 待写 session 集合</li>
  *   <li>peekAll：LRANGE 0 -1，供读侧合并（不消费）</li>

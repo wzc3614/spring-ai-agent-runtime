@@ -22,8 +22,9 @@ import com.agentruntime.api.repository.MessageRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * 基于 Redis INCR 的会话 seq 分配器。首次分配时从 DB MAX(seq) 初始化，
- * 保证 seq 单调递增、跨实例一致。分配出的 seq 随 WriteTask 落库，UNIQUE 兜底幂等。
+ * 基于 Redis INCR 的会话 seq 分配器。按 sessionId 作用域（记忆按 session 共享），
+ * 首次分配时从 DB MAX(seq) 初始化，保证 seq 单调递增、跨实例一致。
+ * 分配出的 seq 随 WriteTask 落库，UNIQUE(session_id, seq) 兜底幂等。
  */
 public class RedisSessionSeqProvider implements SessionSeqProvider {
 

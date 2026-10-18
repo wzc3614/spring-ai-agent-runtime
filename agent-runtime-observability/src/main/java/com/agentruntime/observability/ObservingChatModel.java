@@ -51,7 +51,8 @@ public class ObservingChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        Span span = recorder.startSpan(SpanTypeEnum.MODEL_CALL, SpanContextHolder.parentSpanId(), SpanContextHolder.sessionId());
+        Span span = recorder.startSpan(SpanTypeEnum.MODEL_CALL, SpanContextHolder.parentSpanId(),
+                SpanContextHolder.sessionId());
         try {
             ChatResponse response = delegate.call(prompt);
             applyAttributes(span, prompt, response);

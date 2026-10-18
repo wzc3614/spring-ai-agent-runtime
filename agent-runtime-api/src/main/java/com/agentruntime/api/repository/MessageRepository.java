@@ -52,7 +52,7 @@ public interface MessageRepository {
     List<AgentMessage> findBySession(String sessionId, long fromSeq);
 
     /**
-     * 查询会话内最新一条消息。
+     * 查询会话内最新一条消息（供 seq 分配器从 DB MAX(seq) 初始化）。
      *
      * @param sessionId 会话 ID
      * @return 最新消息
@@ -69,7 +69,7 @@ public interface MessageRepository {
     int markCompacted(String messageId, String evidenceId);
 
     /**
-     * 会话结束时批量清理其消息（供 ChatMemory.clear）。
+     * 会话结束时批量清理其消息（记忆按 session 共享，clear 走此路径）。
      *
      * @param sessionId 会话 ID
      * @return 受影响行数

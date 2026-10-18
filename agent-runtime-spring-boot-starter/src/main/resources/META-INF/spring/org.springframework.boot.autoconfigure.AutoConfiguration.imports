@@ -1,2 +1,3 @@
 com.agentruntime.autoconfigure.AgentRuntimeAutoConfiguration
 com.agentruntime.autoconfigure.ParallelToolCallingAutoConfiguration
+com.agentruntime.autoconfigure.ReactorContextPropagationAutoConfiguration

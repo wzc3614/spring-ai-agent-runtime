@@ -27,7 +27,7 @@ public class AgentMessage {
     /** 消息唯一 ID */
     private String messageId;
 
-    /** 所属会话 ID */
+    /** 所属会话 ID（生命周期 + 记忆作用域，一个用户的一次 agent 连接） */
     private String sessionId;
 
     /** 会话内单调递增序号，保证顺序 */

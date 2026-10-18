@@ -32,7 +32,8 @@ public class AgentRuntimeFactory {
 
     private final ObjectMapper objectMapper;
 
-    public AgentRuntimeFactory(SessionRepository sessionRepository, ObservabilityRecorder recorder, ObjectMapper objectMapper) {
+    public AgentRuntimeFactory(SessionRepository sessionRepository,
+                               ObservabilityRecorder recorder, ObjectMapper objectMapper) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;

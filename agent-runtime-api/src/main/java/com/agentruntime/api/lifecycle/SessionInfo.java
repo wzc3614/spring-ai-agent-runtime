@@ -26,6 +26,9 @@ public class SessionInfo {
     /** 会话 ID */
     private String sessionId;
 
+    /** 用户 ID */
+    private String userId;
+
     /** Agent 名称 */
     private String agentName;
 
@@ -47,6 +50,14 @@ public class SessionInfo {
 
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     public String getAgentName() {

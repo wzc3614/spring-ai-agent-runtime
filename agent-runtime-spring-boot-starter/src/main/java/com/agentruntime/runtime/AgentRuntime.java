@@ -33,6 +33,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.util.CollectionUtils;
+import reactor.core.publisher.Flux;
+import reactor.util.context.Context;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -44,6 +46,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Agent 运行时入口。包装 Spring AI {@link ChatClient}，挂载记忆 Advisor，
  * 管理会话生命周期（START / ENDED）并回调监听器。
+ *
+ * <p>两层 ID：uid（用户）→ sessionId（会话生命周期 + 记忆作用域）。记忆按 session 共享累积，
+ * 跨调用持久化。turnId 在内部按"一轮用户交互"生成，不暴露到公开签名。
  */
 public class AgentRuntime {
 
@@ -61,6 +66,9 @@ public class AgentRuntime {
 
     /** 会话开始时间，用于计算 duration */
     private final Map<String, Instant> startedAtMap = new ConcurrentHashMap<>();
+
+    /** 会话级 uid 缓存，供 close 时回填生命周期事件 */
+    private final Map<String, String> uidBySession = new ConcurrentHashMap<>();
 
     /** 会话级 SESSION span id */
     private final Map<String, String> sessionSpanIds = new ConcurrentHashMap<>();
@@ -83,12 +91,13 @@ public class AgentRuntime {
     /**
      * 发起一次对话。
      *
-     * @param sessionId 会话 ID
-     * @param userText  用户输入
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID（生命周期 + 记忆作用域，记忆跨调用共享累积）
+     * @param userText   用户输入
      * @return 模型回复
      */
-    public String call(String sessionId, String userText) {
-        ensureStarted(sessionId);
+    public String call(String uid, String sessionId, String userText) {
+        ensureStarted(uid, sessionId);
         String sessionSpanId = sessionSpanIds.get(sessionId);
         Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
         SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
@@ -111,50 +120,103 @@ public class AgentRuntime {
     }
 
     /**
+     * 发起一次流式对话，按 token 增量返回模型回复。
+     *
+     * <p>TURN span 在订阅时开始、在流终止（complete/error/cancel）时结束；完整回复累积后记为
+     * {@code FINAL_REPLY} 事件。span 上下文经 {@code contextWrite} 写入 Reactor Context，
+     * 配合自动上下文传播，工具装饰器在 reactor 线程上也能正确建 TOOL_CALL span。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID（生命周期 + 记忆作用域，记忆跨调用共享累积）
+     * @param userText   用户输入
+     * @return 模型回复 token 流
+     */
+    public Flux<String> stream(String uid, String sessionId, String userText) {
+        return Flux.defer(() -> {
+            ensureStarted(uid, sessionId);
+            String sessionSpanId = sessionSpanIds.get(sessionId);
+            Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
+            SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
+            StringBuilder accumulated = new StringBuilder();
+            // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
+            ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userText);
+            if (!CollectionUtils.isEmpty(tools)) {
+                spec = spec.toolCallbacks(tools);
+            }
+            return spec
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
+                    .stream()
+                    .content()
+                    .doOnNext(accumulated::append)
+                    .doOnComplete(() -> recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY,
+                            accumulated.toString()))
+                    .doFinally(s -> {
+                        SpanContextHolder.clear();
+                        recorder.endSpan(turnSpan.getSpanId());
+                    })
+                    .contextWrite(Context.of(
+                            SpanContextHolder.CONTEXT_KEY_PARENT_SPAN_ID, turnSpan.getSpanId(),
+                            SpanContextHolder.CONTEXT_KEY_SESSION_ID, sessionId));
+        });
+    }
+
+    /**
      * 结束会话，触发 ENDED 事件并计算 duration。
      *
      * @param sessionId 会话 ID
      */
     public void close(String sessionId) {
         Instant startedAt = startedAtMap.remove(sessionId);
+        String uid = uidBySession.remove(sessionId);
         Instant now = Instant.now();
         Duration duration = startedAt != null ? Duration.between(startedAt, now) : Duration.ZERO;
         sessionRepository.updateStatus(sessionId, SessionStatusEnum.ENDED);
-        fireLifecycle(sessionId, AgentLifecycleTypeEnum.ENDED, now, startedAt, now, duration);
+        fireLifecycle(sessionId, AgentLifecycleTypeEnum.ENDED, now, startedAt, now, duration, uid);
         String sessionSpanId = sessionSpanIds.remove(sessionId);
         if (sessionSpanId != null) {
             recorder.endSpan(sessionSpanId);
         }
     }
 
-    private void ensureStarted(String sessionId) {
+    /**
+     * 幂等启动会话：确保 session 记录存在（带 uid）且开 SESSION span，触发 START 生命周期。
+     */
+    private void ensureStarted(String uid, String sessionId) {
         if (startedAtMap.containsKey(sessionId)) {
             return;
         }
         Instant now = Instant.now();
         Optional<AgentSession> existing = sessionRepository.findById(sessionId);
+        String effectiveUid;
         if (existing.isEmpty()) {
             AgentSession session = new AgentSession();
             session.setSessionId(sessionId);
             session.setAgentName(agentName);
+            session.setUserId(uid);
             session.setStatus(SessionStatusEnum.ACTIVE);
             session.setCreatedAt(now);
             session.setLastActiveAt(now);
             sessionRepository.save(session);
+            effectiveUid = uid;
+        } else {
+            // 会话已存在（跨实例续接）：优先用既有 uid，避免本次调用传 null 覆盖
+            effectiveUid = existing.get().getUserId() != null ? existing.get().getUserId() : uid;
         }
         startedAtMap.put(sessionId, now);
+        uidBySession.put(sessionId, effectiveUid);
         Span sessionSpan = recorder.startSpan(SpanTypeEnum.SESSION, null, sessionId);
         sessionSpanIds.put(sessionId, sessionSpan.getSpanId());
-        fireLifecycle(sessionId, AgentLifecycleTypeEnum.START, now, now, null, null);
+        fireLifecycle(sessionId, AgentLifecycleTypeEnum.START, now, now, null, null, effectiveUid);
     }
 
     private void fireLifecycle(String sessionId, AgentLifecycleTypeEnum type, Instant occurredAt,
-                               Instant startedAt, Instant endedAt, Duration duration) {
+                               Instant startedAt, Instant endedAt, Duration duration, String uid) {
         if (listener == null) {
             return;
         }
         SessionInfo info = new SessionInfo();
         info.setSessionId(sessionId);
+        info.setUserId(uid);
         info.setAgentName(agentName);
         info.setAgentVersion(agentVersion);
         info.setStartedAt(startedAt);

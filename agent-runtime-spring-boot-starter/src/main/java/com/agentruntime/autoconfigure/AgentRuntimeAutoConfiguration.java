@@ -156,8 +156,9 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AgentRuntimeFactory agentRuntimeFactory(SessionRepository sessionRepository, ObservabilityRecorder recorder,
-                                                   ObjectMapper objectMapper) {
+    public AgentRuntimeFactory agentRuntimeFactory(SessionRepository sessionRepository,
+                                                    ObservabilityRecorder recorder,
+                                                    ObjectMapper objectMapper) {
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper);
     }
 

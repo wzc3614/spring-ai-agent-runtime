@@ -24,7 +24,7 @@ public class WriteTask {
     /** 幂等任务 ID（sha256） */
     private String taskId;
 
-    /** 会话 ID */
+    /** 所属会话 ID（生命周期 + 记忆作用域，队列键 + 消息 session_id） */
     private String sessionId;
 
     /** 本轮 ID */

@@ -26,7 +26,7 @@ public interface MessageWritePolicy {
     /**
      * 判定单条消息是否应写入。
      *
-     * @param sessionId 会话 ID
+     * @param sessionId 会话 ID（记忆作用域）
      * @param turnId    本轮 ID
      * @param message   待写入消息
      * @return true 写入，false 跳过

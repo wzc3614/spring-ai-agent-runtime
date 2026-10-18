@@ -79,13 +79,17 @@ public class CompactingChatMemory implements ChatMemory {
         if (CollectionUtils.isEmpty(messages)) {
             return;
         }
+        // Spring AI ChatMemory 接口只传一个 id；编排器把 sessionId 作为 CONVERSATION_ID 传入，
+        // 此处 memoryKey 即 sessionId（记忆按 session 共享）。
+        String sessionId = conversationId;
         String turnId = UUID.randomUUID().toString();
         for (Message message : messages) {
             String roleCode = message.getMessageType().getValue();
-            long seq = seqProvider.nextSeq(conversationId);
+            long seq = seqProvider.nextSeq(sessionId);
             String messageId = UUID.randomUUID().toString();
-            WriteTask task = newTask(conversationId, turnId, messageId, seq, roleCode, messageConverter.encode(message));
-            if (!writePolicy.shouldWrite(conversationId, turnId, toAgentMessage(task))) {
+            WriteTask task = newTask(sessionId, turnId, messageId, seq, roleCode,
+                    messageConverter.encode(message));
+            if (!writePolicy.shouldWrite(sessionId, turnId, toAgentMessage(task))) {
                 continue;
             }
             writeQueue.enqueue(task);
@@ -94,6 +98,7 @@ public class CompactingChatMemory implements ChatMemory {
 
     @Override
     public List<Message> get(String conversationId) {
+        // 记忆按 session 共享：传入的 conversationId 实为 sessionId
         List<AgentMessage> merged = loadAndMerge(conversationId);
         List<AgentMessage> kept = keepByBudget(merged);
         List<Message> result = new ArrayList<>(kept.size());
@@ -105,14 +110,15 @@ public class CompactingChatMemory implements ChatMemory {
 
     @Override
     public void clear(String conversationId) {
+        // 记忆按 session 共享：传入的 conversationId 实为 sessionId
         writeQueue.drain(conversationId);
         writeQueue.removeFromPending(conversationId);
         messageRepository.deleteBySession(conversationId);
     }
 
-    private List<AgentMessage> loadAndMerge(String conversationId) {
-        List<AgentMessage> merged = new ArrayList<>(messageRepository.findBySession(conversationId));
-        for (WriteTask task : writeQueue.peekAll(conversationId)) {
+    private List<AgentMessage> loadAndMerge(String sessionId) {
+        List<AgentMessage> merged = new ArrayList<>(messageRepository.findBySession(sessionId));
+        for (WriteTask task : writeQueue.peekAll(sessionId)) {
             merged.add(toAgentMessage(task));
         }
         merged.sort(Comparator.comparingLong(AgentMessage::getSeq));
@@ -138,16 +144,18 @@ public class CompactingChatMemory implements ChatMemory {
             accumulated += tokens;
         }
         if (cutFrom > 0) {
-            log.warn("history over budget, truncated oldest, sessionId={}, kept={}", messages.get(0).getSessionId(), messages.size() - cutFrom);
+            log.warn("history over budget, truncated oldest, sessionId={}, kept={}",
+                    messages.get(0).getSessionId(), messages.size() - cutFrom);
             return new ArrayList<>(messages.subList(cutFrom, messages.size()));
         }
         return messages;
     }
 
-    private WriteTask newTask(String conversationId, String turnId, String messageId, long seq, String roleCode, String content) {
+    private WriteTask newTask(String sessionId, String turnId, String messageId,
+                              long seq, String roleCode, String content) {
         WriteTask task = new WriteTask();
-        task.setTaskId(WriteTaskIdGenerator.generate(roleCode, conversationId, turnId, seq));
-        task.setSessionId(conversationId);
+        task.setTaskId(WriteTaskIdGenerator.generate(roleCode, sessionId, turnId, seq));
+        task.setSessionId(sessionId);
         task.setTurnId(turnId);
         task.setMessageId(messageId);
         task.setSeq(seq);

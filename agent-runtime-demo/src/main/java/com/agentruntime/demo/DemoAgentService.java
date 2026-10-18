@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 /**
  * 演示 Agent 服务：用工厂 bean 组装 CompactingChatMemory + AgentRuntime。
@@ -81,12 +82,25 @@ public class DemoAgentService {
     /**
      * 发起对话。
      *
-     * @param sessionId 会话 ID
-     * @param message   用户消息
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID
+     * @param message    用户消息
      * @return 回复
      */
-    public String chat(String sessionId, String message) {
-        return agent.call(sessionId, message);
+    public String chat(String uid, String sessionId, String message) {
+        return agent.call(uid, sessionId, message);
+    }
+
+    /**
+     * 发起流式对话，按 token 增量返回回复。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID
+     * @param message    用户消息
+     * @return 回复 token 流
+     */
+    public Flux<String> chatStream(String uid, String sessionId, String message) {
+        return agent.stream(uid, sessionId, message);
     }
 
     /**

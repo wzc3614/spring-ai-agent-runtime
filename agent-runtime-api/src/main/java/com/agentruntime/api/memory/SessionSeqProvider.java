@@ -16,8 +16,9 @@
 package com.agentruntime.api.memory;
 
 /**
- * 会话消息序号分配 SPI。默认实现基于 Redis INCR，首次调用时从 DB MAX(seq) 初始化，
- * 保证 seq 单调递增、跨实例一致。分配出的 seq 随 WriteTask 落库，UNIQUE(session_id,seq) 兜底幂等。
+ * 会话消息序号分配 SPI。按会话（session）作用域分配（记忆按 session 共享），
+ * 默认实现基于 Redis INCR，首次调用时从 DB MAX(seq) 初始化，保证 seq 单调递增、跨实例一致。
+ * 分配出的 seq 随 WriteTask 落库，UNIQUE(session_id, seq) 兜底幂等。
  */
 public interface SessionSeqProvider {
 

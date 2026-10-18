@@ -55,7 +55,8 @@ public class ObservabilityToolCallback extends BaseToolCallbackDecorator {
     }
 
     private String observe(String toolInput, java.util.function.Supplier<String> action) {
-        Span span = recorder.startSpan(SpanTypeEnum.TOOL_CALL, SpanContextHolder.parentSpanId(), SpanContextHolder.sessionId());
+        Span span = recorder.startSpan(SpanTypeEnum.TOOL_CALL, SpanContextHolder.parentSpanId(),
+                SpanContextHolder.sessionId());
         applyToolName(span);
         recorder.recordEvent(span.getSpanId(), EventTypeEnum.TOOL_INPUT, toolInput);
         try {
