@@ -33,6 +33,9 @@ import com.agentruntime.observability.JdbcObservabilitySink;
 import com.agentruntime.observability.JdbcSpanRepository;
 import com.agentruntime.observability.LoggingObservabilitySink;
 import com.agentruntime.observability.SpanTreeObservabilityRecorder;
+import com.agentruntime.observability.stream.ObservabilityStreamConsumer;
+import com.agentruntime.observability.stream.ObservabilityStreamQueue;
+import com.agentruntime.observability.stream.RedisStreamObservabilitySink;
 import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.LocalTokenEstimator;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
@@ -51,6 +54,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -184,8 +188,38 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "agent-runtime.observability.persist", name = "mode", havingValue = "sync")
     public JdbcObservabilitySink jdbcObservabilitySink(SpanRepository spanRepository, EventRepository eventRepository) {
         return new JdbcObservabilitySink(spanRepository, eventRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "agent-runtime.observability.persist", name = "mode",
+            havingValue = "async", matchIfMissing = true)
+    public ObservabilityStreamQueue observabilityStreamQueue(StringRedisTemplate redisTemplate) {
+        return new ObservabilityStreamQueue(redisTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(ObservabilityStreamQueue.class)
+    public RedisStreamObservabilitySink redisStreamObservabilitySink(ObservabilityStreamQueue queue,
+                                                                     ObjectMapper objectMapper) {
+        return new RedisStreamObservabilitySink(queue, objectMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(ObservabilityStreamQueue.class)
+    public ObservabilityStreamConsumer observabilityStreamConsumer(ObservabilityStreamQueue queue,
+                                                                    SpanRepository spanRepository,
+                                                                    EventRepository eventRepository,
+                                                                    TransactionPort transactionPort,
+                                                                    StringRedisTemplate redisTemplate,
+                                                                    ObjectMapper objectMapper) {
+        return new ObservabilityStreamConsumer(queue, spanRepository, eventRepository,
+                transactionPort, redisTemplate, objectMapper);
     }
 
     @Bean

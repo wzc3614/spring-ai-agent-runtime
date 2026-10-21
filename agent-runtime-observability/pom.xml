@@ -36,6 +36,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
+        <!-- Redis: Stream + consumer group async write queue for span/event -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
         <!-- OpenTelemetry SDK (for OTLP export) will be added when the observability
              subsystem is implemented; kept out of the skeleton to avoid extra resolution. -->
     </dependencies>

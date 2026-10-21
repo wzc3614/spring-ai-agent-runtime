@@ -43,6 +43,7 @@
 - [x] D1 Span/Event 树构建器（`SpanTreeObservabilityRecorder` + `ObservabilityRecorder`/`ObservabilitySink` SPI）
 - [x] D2 `JdbcSpanRepository` / `JdbcEventRepository`（+ RowMappers）
 - [x] D3 基础埋点接进调用链（SESSION/TURN + FINAL_REPLY；LlmCallSpan via ObservingChatModel 记 usage/finishReason；ToolCallSpan via ObservabilityToolCallback 记 TOOL_INPUT/OUTPUT；span 加 attributes）
+- [x] D3.1 日志异步写入：Redis Stream + 消费组（`RedisStreamObservabilitySink`/`ObservabilityStreamQueue`/`ObservabilityStreamConsumer`），`mode=async` 默认；失败重投 + DLQ + XCLAIM 接管；FK 顺序靠 `findById` 校验 + 重投 + `ON CONFLICT DO NOTHING` 幂等
 - [ ] D4 OpenTelemetry/OTLP 导出
 - [ ] D5 自建轻量可视化 Web UI
 - [ ] D6 查询 + ASCII 树渲染器 + REST（本期不做）

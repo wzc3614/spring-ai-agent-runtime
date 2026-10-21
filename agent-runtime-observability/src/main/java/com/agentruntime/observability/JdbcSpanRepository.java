@@ -17,6 +17,7 @@ package com.agentruntime.observability;
 
 import com.agentruntime.api.domain.Span;
 import com.agentruntime.api.repository.SpanRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -44,9 +45,9 @@ public class JdbcSpanRepository implements SpanRepository {
             "SELECT span_id, parent_span_id, session_id, span_type, started_at, ended_at, attributes "
                     + "FROM agent_runtime_obs.span WHERE parent_span_id = ?";
 
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
 
-    public JdbcSpanRepository(org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+    public JdbcSpanRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

@@ -76,7 +76,8 @@ demo      端到端示例
 - `api.observability.ObservabilityRecorder`/`ObservabilitySink`：端口。
 - `SpanTreeObservabilityRecorder`：建 Span/Event 树�，pending map + UUID；**缓冲 event，span 结束时先 writeSpan 再 writeEvent**（保证 event 的 span FK）。
 - `LoggingObservabilitySink`：默认，永远在线，结构化写 slf4j（英文）。
-- `JdbcObservabilitySink`：落库 `agent_runtime_obs`（条件装配 DataSource）。
+- `JdbcObservabilitySink`：同步落库 `agent_runtime_obs`（条件装配 DataSource，`mode=sync` 时启用）。
+- `RedisStreamObservabilitySink` + `ObservabilityStreamQueue` + `ObservabilityStreamConsumer`：`mode=async`（默认）异步通道，span/event 经 Redis Stream + 消费组 XADD/XREADGROUP/XACK 异步落库，失败重投 + DLQ，XCLAIM 接管宕机 consumer；FK 顺序靠 EVENT 落库前 `findById` 校验 + 重投兜底，DB `ON CONFLICT DO NOTHING` 保证幂等。
 - `JdbcSpanRepository`/`JdbcEventRepository`/`ObservabilityRowMappers`：span/event 仓储。
 - `ObservingChatModel`：包 `ChatModel`，每次 LLM 调用建 `MODEL_CALL`（LlmCallSpan），从响应元数据采 `modelName/finishReason/inputTokens/outputTokens` 写 span 属性。
 - `ObservabilityToolCallback`：包 `ToolCallback`（继承 `BaseToolCallbackDecorator`），每次调用建 `TOOL_CALL`（ToolCallSpan）+ `TOOL_INPUT`/`TOOL_OUTPUT` 事件，失败记 `ERROR`，span 属性带 `toolName`。

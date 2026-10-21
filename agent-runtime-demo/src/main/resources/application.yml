@@ -25,3 +25,12 @@ spring:
 
 server:
   port: 8080
+
+# Agent Runtime observability persistence mode:
+#   async (default) — span/event go through Redis Stream + consumer group, written to DB by
+#                     ObservabilityStreamConsumer (non-blocking for the request thread).
+#   sync           — JdbcObservabilitySink writes to DB synchronously in the request thread.
+agent-runtime:
+  observability:
+    persist:
+      mode: async
