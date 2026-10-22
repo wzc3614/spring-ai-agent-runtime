@@ -17,6 +17,11 @@ package com.agentruntime.autoconfigure;
 
 import com.agentruntime.core.concurrency.parallel.ParallelToolCallingManager;
 import com.agentruntime.core.concurrency.parallel.ParallelToolExecutor;
+import com.agentruntime.core.tool.DefaultToolFailureClassifier;
+import com.agentruntime.core.tool.DefaultToolMetaRegistry;
+import com.agentruntime.core.tool.ToolGovernanceDefaults;
+import com.agentruntime.core.tool.ToolMetaRegistry;
+import com.agentruntime.api.spi.ToolFailureClassifier;
 
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.model.tool.ToolCallingManager;
@@ -28,6 +33,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 /**
@@ -37,20 +43,42 @@ import org.springframework.context.annotation.Bean;
  *
  * <p>协作者（{@link ToolCallbackResolver}、{@link ToolExecutionExceptionProcessor}、
  * {@link ObservationRegistry}）在 Spring AI 自动配置存在时复用；缺失时经 builder 应用与 Spring AI
- * 相同的默认值。
+ * 相同的默认值。同时装配工具治理三件套：{@link ToolMetaRegistry}、{@link ToolFailureClassifier}、
+ * {@link ToolGovernanceDefaults}（来自 {@link ToolGovernanceProperties}），供重试/超时使用。
  */
 @AutoConfiguration
 @AutoConfigureBefore(name = "org.springframework.ai.model.tool.autoconfigure.ToolCallingAutoConfiguration")
 @ConditionalOnClass({ToolCallingManager.class, ParallelToolExecutor.class})
+@EnableConfigurationProperties(ToolGovernanceProperties.class)
 public class ParallelToolCallingAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean(ToolMetaRegistry.class)
+    public ToolMetaRegistry toolMetaRegistry() {
+        return new DefaultToolMetaRegistry();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ToolFailureClassifier.class)
+    public ToolFailureClassifier toolFailureClassifier() {
+        return new DefaultToolFailureClassifier();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ToolGovernanceDefaults.class)
+    public ToolGovernanceDefaults toolGovernanceDefaults(ToolGovernanceProperties properties) {
+        return properties.toDefaults();
+    }
 
     @Bean
     @ConditionalOnMissingBean(ToolCallingManager.class)
     public ToolCallingManager parallelToolCallingManager(
             ObjectProvider<ToolCallbackResolver> toolCallbackResolverProvider,
             ObjectProvider<ToolExecutionExceptionProcessor> toolExecutionExceptionProcessorProvider,
-            ObjectProvider<ObservationRegistry> observationRegistryProvider) {
+            ObjectProvider<ObservationRegistry> observationRegistryProvider,
+            ToolMetaRegistry toolMetaRegistry, ToolGovernanceDefaults governanceDefaults) {
         ParallelToolCallingManager.Builder builder = ParallelToolCallingManager.builder();
+        builder.toolMetaRegistry(toolMetaRegistry).governanceDefaults(governanceDefaults);
         ToolCallbackResolver resolver = toolCallbackResolverProvider.getIfAvailable();
         if (resolver != null) {
             builder.toolCallbackResolver(resolver);

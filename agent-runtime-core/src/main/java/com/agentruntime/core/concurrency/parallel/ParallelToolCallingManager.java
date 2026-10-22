@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.time.Duration;
 
 import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
@@ -49,6 +50,11 @@ import org.springframework.ai.tool.resolution.DelegatingToolCallbackResolver;
 import org.springframework.ai.tool.resolution.ToolCallbackResolver;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
+
+import com.agentruntime.core.tool.DefaultToolMetaRegistry;
+import com.agentruntime.core.tool.ToolGovernanceDefaults;
+import com.agentruntime.core.tool.ToolMeta;
+import com.agentruntime.core.tool.ToolMetaRegistry;
 
 /**
  * Spring AI {@link ToolCallingManager} 的并行实现。用 {@link ParallelToolExecutor}
@@ -90,12 +96,17 @@ public class ParallelToolCallingManager implements ToolCallingManager {
 
     private final int maxConcurrency;
 
+    private final ToolMetaRegistry toolMetaRegistry;
+
+    private final ToolGovernanceDefaults governanceDefaults;
+
     private ToolCallingObservationConvention observationConvention = DEFAULT_OBSERVATION_CONVENTION;
 
     public ParallelToolCallingManager(ObservationRegistry observationRegistry,
             ToolCallbackResolver toolCallbackResolver,
             ToolExecutionExceptionProcessor toolExecutionExceptionProcessor,
-            ParallelToolExecutor parallelToolExecutor, int maxConcurrency) {
+            ParallelToolExecutor parallelToolExecutor, int maxConcurrency,
+            ToolMetaRegistry toolMetaRegistry, ToolGovernanceDefaults governanceDefaults) {
         Assert.notNull(observationRegistry, "observationRegistry cannot be null");
         Assert.notNull(toolCallbackResolver, "toolCallbackResolver cannot be null");
         Assert.notNull(toolExecutionExceptionProcessor, "toolExecutionExceptionProcessor cannot be null");
@@ -105,6 +116,8 @@ public class ParallelToolCallingManager implements ToolCallingManager {
         this.toolExecutionExceptionProcessor = toolExecutionExceptionProcessor;
         this.parallelToolExecutor = parallelToolExecutor;
         this.maxConcurrency = Math.max(1, maxConcurrency);
+        this.toolMetaRegistry = toolMetaRegistry != null ? toolMetaRegistry : new DefaultToolMetaRegistry();
+        this.governanceDefaults = governanceDefaults != null ? governanceDefaults : new ToolGovernanceDefaults();
     }
 
     @Override
@@ -171,19 +184,20 @@ public class ParallelToolCallingManager implements ToolCallingManager {
 
         // 并发执行各工具；结果按模型请求顺序对齐。
         List<Supplier<String>> tasks = new ArrayList<>(toolCalls.size());
+        List<Duration> timeouts = new ArrayList<>(toolCalls.size());
         for (int i = 0; i < toolCalls.size(); i++) {
             final ToolCallback toolCallback = resolvedCallbacks.get(i);
             final String toolInputArguments = toolCalls.get(i).arguments();
             tasks.add(() -> executeSingleTool(toolCallback, toolInputArguments, toolContext));
+            timeouts.add(resolveTimeout(toolCallback.getToolDefinition().name()));
         }
-        List<String> results = this.parallelToolExecutor.invoke(tasks, this.maxConcurrency);
+        List<TaskResult<String>> results = this.parallelToolExecutor.invoke(tasks, this.maxConcurrency, timeouts);
 
         List<ToolResponseMessage.ToolResponse> toolResponses = new ArrayList<>(toolCalls.size());
         for (int i = 0; i < toolCalls.size(); i++) {
             AssistantMessage.ToolCall toolCall = toolCalls.get(i);
-            String result = results.get(i);
-            toolResponses.add(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(),
-                    result != null ? result : ""));
+            String result = toToolResponseContent(toolCall.name(), results.get(i));
+            toolResponses.add(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(), result));
         }
 
         ToolResponseMessage toolResponseMessage = new ToolResponseMessage(toolResponses, Map.of());
@@ -224,6 +238,55 @@ public class ParallelToolCallingManager implements ToolCallingManager {
                 observationContext.setToolCallResult(toolResult);
                 return toolResult;
             });
+    }
+
+    /** 按工具元数据解析单次调用总超时；meta 未配置时用全局默认。 */
+    private Duration resolveTimeout(String toolName) {
+        ToolMeta meta = toolMetaRegistry.getMeta(toolName);
+        Long timeoutMs = meta.getTimeoutMs();
+        if (timeoutMs != null && timeoutMs > 0) {
+            return Duration.ofMillis(timeoutMs);
+        }
+        return Duration.ofMillis(Math.max(1L, governanceDefaults.getDefaultTimeoutMs()));
+    }
+
+    /**
+     * 把单个工具的 {@link TaskResult} 映射为回填模型的字符串内容。
+     * 成功 → 工具返回值；超时 → 结构化 tool_timeout 错误；失败 → 失败摘要。
+     * 单工具超时/失败不抛出，保证同轮其它工具结果照常返回。
+     */
+    private String toToolResponseContent(String toolName, TaskResult<String> result) {
+        if (result == null) {
+            return "";
+        }
+        if (result.isSuccess()) {
+            String value = result.getValue();
+            return value != null ? value : "";
+        }
+        if (result.isTimedOut()) {
+            long timeoutMs = resolveTimeoutMs(toolName);
+            return "{\"error\":\"tool_timeout\",\"tool\":\"" + toolName + "\",\"timeoutMs\":" + timeoutMs + "}";
+        }
+        Throwable error = result.getError();
+        String message = error != null && error.getMessage() != null ? error.getMessage() : error.getClass().getName();
+        return "{\"error\":\"tool_failed\",\"tool\":\"" + toolName + "\",\"cause\":\"" + escape(message) + "\"}";
+    }
+
+    private long resolveTimeoutMs(String toolName) {
+        ToolMeta meta = toolMetaRegistry.getMeta(toolName);
+        Long timeoutMs = meta.getTimeoutMs();
+        if (timeoutMs != null && timeoutMs > 0) {
+            return timeoutMs;
+        }
+        return Math.max(1L, governanceDefaults.getDefaultTimeoutMs());
+    }
+
+    /** 最小化转义，避免错误信息里的引号破坏回填模型的 JSON。 */
+    private String escape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
     }
 
     private static ToolContext buildToolContext(Prompt prompt, AssistantMessage assistantMessage) {
@@ -275,6 +338,10 @@ public class ParallelToolCallingManager implements ToolCallingManager {
 
         private int maxConcurrency = DEFAULT_MAX_CONCURRENCY;
 
+        private ToolMetaRegistry toolMetaRegistry;
+
+        private ToolGovernanceDefaults governanceDefaults;
+
         private Builder() {
         }
 
@@ -304,9 +371,20 @@ public class ParallelToolCallingManager implements ToolCallingManager {
             return this;
         }
 
+        public Builder toolMetaRegistry(ToolMetaRegistry toolMetaRegistry) {
+            this.toolMetaRegistry = toolMetaRegistry;
+            return this;
+        }
+
+        public Builder governanceDefaults(ToolGovernanceDefaults governanceDefaults) {
+            this.governanceDefaults = governanceDefaults;
+            return this;
+        }
+
         public ParallelToolCallingManager build() {
             return new ParallelToolCallingManager(this.observationRegistry, this.toolCallbackResolver,
-                    this.toolExecutionExceptionProcessor, this.parallelToolExecutor, this.maxConcurrency);
+                    this.toolExecutionExceptionProcessor, this.parallelToolExecutor, this.maxConcurrency,
+                    this.toolMetaRegistry, this.governanceDefaults);
         }
     }
 }

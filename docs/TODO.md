@@ -64,8 +64,9 @@
 - [ ] F6 复用悬空修复做审批恢复
 
 ### G. 工具失败/重试（已设计未建）
-- [ ] G1 `GovernedToolCallback`/`RetryToolCallback`
-- [ ] G2 `DefaultToolFailureClassifier`（依赖 A5）
+- [x] G1 `GovernedToolCallback`/`RetryToolCallback` — 已落地为 `GovernedToolCallback`（重试+分类装饰器），接进 `AgentRuntimeBuilder` 包装链（raw -> Governed -> Observability）
+- [x] G2 `DefaultToolFailureClassifier`（依赖 A5）— 已有，本轮接入调用链
+- [x] G3 单调用超时 + 失败隔离 — `ParallelToolExecutor` 增按任务超时重载（`future.get(timeout)` + `cancel(true)`），返回 `TaskResult`；`ParallelToolCallingManager` 按工具元数据取超时、单工具失败/超时转错误结果回填模型不阻塞链路；`ToolMeta` 扩展 `timeoutMs/maxAttempts/backoff`，`ToolGovernanceProperties` 提供全局默认（默认不重试、30s 超时）
 
 ### H. 横切 / 基建 / 质量
 - [ ] H1 单元测试 + 集成测试

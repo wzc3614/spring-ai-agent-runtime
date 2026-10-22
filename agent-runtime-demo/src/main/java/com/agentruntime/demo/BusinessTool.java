@@ -35,7 +35,7 @@ public class BusinessTool {
      * @param userId 用户 ID
      * @return 用户信息
      */
-    @Tool(name = "query_user_info", description = "Query basic profile of a user by userId.")
+    @Tool(name = "query_user_info", description = "根据 userId 查询用户基本信息。")
     public String queryUserInfo(String userId) {
         sleep();
         return "{\"userId\":\"" + userId + "\",\"name\":\"Zhang San\",\"level\":\"VIP\",\"region\":\"CN\"}";
@@ -47,7 +47,7 @@ public class BusinessTool {
      * @param userId 用户 ID
      * @return 订单列表
      */
-    @Tool(name = "query_recent_orders", description = "Query recent orders of a user by userId.")
+    @Tool(name = "query_recent_orders", description = "根据 userId 查询用户近期订单。")
     public String queryRecentOrders(String userId) {
         sleep();
         return "{\"userId\":\"" + userId + "\",\"orders\":[{\"orderId\":\"ORD-1001\",\"status\":\"shipped\"},"

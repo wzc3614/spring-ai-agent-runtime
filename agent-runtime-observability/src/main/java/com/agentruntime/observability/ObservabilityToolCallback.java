@@ -64,9 +64,15 @@ public class ObservabilityToolCallback extends BaseToolCallbackDecorator {
             recorder.recordEvent(span.getSpanId(), EventTypeEnum.TOOL_OUTPUT, output);
             return output;
         } catch (RuntimeException e) {
+            // 超时中断（ParallelToolExecutor future.cancel(true)）会让线程处于中断态，
+            // 此处需先清中断标志，否则后续 recorder 的 Redis I/O 会抛 RedisCommandInterruptedException，
+            // 导致 ERROR event 与 endSpan 落不了库。原始异常 e 已捕获，不丢信息。
+            Thread.interrupted();
             recorder.recordEvent(span.getSpanId(), EventTypeEnum.ERROR, e.getMessage());
             throw e;
         } finally {
+            // 同上：保证 endSpan 不被残留中断标志破坏。
+            Thread.interrupted();
             recorder.endSpan(span.getSpanId());
         }
     }

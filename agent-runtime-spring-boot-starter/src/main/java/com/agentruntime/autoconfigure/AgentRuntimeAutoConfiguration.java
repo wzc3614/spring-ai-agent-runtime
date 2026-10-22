@@ -162,8 +162,12 @@ public class AgentRuntimeAutoConfiguration {
     @ConditionalOnMissingBean
     public AgentRuntimeFactory agentRuntimeFactory(SessionRepository sessionRepository,
                                                     ObservabilityRecorder recorder,
-                                                    ObjectMapper objectMapper) {
-        return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper);
+                                                    ObjectMapper objectMapper,
+                                                    com.agentruntime.core.tool.ToolMetaRegistry toolMetaRegistry,
+                                                    com.agentruntime.api.spi.ToolFailureClassifier toolFailureClassifier,
+                                                    com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults) {
+        return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
+                toolMetaRegistry, toolFailureClassifier, governanceDefaults);
     }
 
     // ----- Observability -----

@@ -17,6 +17,9 @@ package com.agentruntime.runtime;
 
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
+import com.agentruntime.api.spi.ToolFailureClassifier;
+import com.agentruntime.core.tool.ToolGovernanceDefaults;
+import com.agentruntime.core.tool.ToolMetaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ChatModel;
 
@@ -32,11 +35,23 @@ public class AgentRuntimeFactory {
 
     private final ObjectMapper objectMapper;
 
+    private final ToolMetaRegistry toolMetaRegistry;
+
+    private final ToolFailureClassifier toolFailureClassifier;
+
+    private final ToolGovernanceDefaults governanceDefaults;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
-                               ObservabilityRecorder recorder, ObjectMapper objectMapper) {
+                               ObservabilityRecorder recorder, ObjectMapper objectMapper,
+                               ToolMetaRegistry toolMetaRegistry,
+                               ToolFailureClassifier toolFailureClassifier,
+                               ToolGovernanceDefaults governanceDefaults) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
+        this.toolMetaRegistry = toolMetaRegistry;
+        this.toolFailureClassifier = toolFailureClassifier;
+        this.governanceDefaults = governanceDefaults;
     }
 
     /**
@@ -59,5 +74,17 @@ public class AgentRuntimeFactory {
 
     public ObjectMapper getObjectMapper() {
         return objectMapper;
+    }
+
+    public ToolMetaRegistry getToolMetaRegistry() {
+        return toolMetaRegistry;
+    }
+
+    public ToolFailureClassifier getToolFailureClassifier() {
+        return toolFailureClassifier;
+    }
+
+    public ToolGovernanceDefaults getGovernanceDefaults() {
+        return governanceDefaults;
     }
 }

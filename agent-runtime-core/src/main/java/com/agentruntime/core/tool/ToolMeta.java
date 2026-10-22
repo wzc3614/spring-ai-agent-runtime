@@ -32,6 +32,15 @@ public class ToolMeta {
     /** 是否幂等（决定失败能否自动重试） */
     private boolean idempotent;
 
+    /** 单次调用总墙钟超时（毫秒），null 表示用全局默认 */
+    private Long timeoutMs;
+
+    /** 最大尝试次数（含首次，>=1），null 表示用全局默认；默认 1 即不重试 */
+    private Integer maxAttempts;
+
+    /** 重试退避策略，null 表示用全局默认 */
+    private BackoffPolicy backoff;
+
     public String getToolName() {
         return toolName;
     }
@@ -54,5 +63,29 @@ public class ToolMeta {
 
     public void setIdempotent(boolean idempotent) {
         this.idempotent = idempotent;
+    }
+
+    public Long getTimeoutMs() {
+        return timeoutMs;
+    }
+
+    public void setTimeoutMs(Long timeoutMs) {
+        this.timeoutMs = timeoutMs;
+    }
+
+    public Integer getMaxAttempts() {
+        return maxAttempts;
+    }
+
+    public void setMaxAttempts(Integer maxAttempts) {
+        this.maxAttempts = maxAttempts;
+    }
+
+    public BackoffPolicy getBackoff() {
+        return backoff;
+    }
+
+    public void setBackoff(BackoffPolicy backoff) {
+        this.backoff = backoff;
     }
 }

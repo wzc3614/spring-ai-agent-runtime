@@ -30,6 +30,10 @@ import java.net.SocketTimeoutException;
  *   <li>超时/连接/IO 类 → TRANSIENT（幂等可重试）</li>
  *   <li>其余 → TERMINAL（不重试，回填模型）</li>
  * </ul>
+ *
+ * <p>注意：Spring AI {@code MethodToolCallback} 会把工具方法抛出的异常包成
+ * {@code ToolExecutionException(cause=原始异常)}，因此分类时需 {@link #unwrap(Throwable)}
+ * 到根因再判断，否则 {@code IOException}/{@code SocketTimeoutException} 会被误判为 TERMINAL。
  */
 public class DefaultToolFailureClassifier implements ToolFailureClassifier {
 
@@ -38,15 +42,25 @@ public class DefaultToolFailureClassifier implements ToolFailureClassifier {
         if (error == null) {
             return FailureCategoryEnum.TERMINAL;
         }
-        boolean timeoutLike = isTimeoutLike(error);
+        Throwable root = unwrap(error);
+        boolean timeoutLike = isTimeoutLike(root);
         boolean idempotent = toolCall != null && toolCall.isIdempotent();
         if (!idempotent && timeoutLike) {
             return FailureCategoryEnum.AMBIGUOUS;
         }
-        if (timeoutLike || error instanceof IOException) {
+        if (timeoutLike || root instanceof IOException) {
             return FailureCategoryEnum.TRANSIENT;
         }
         return FailureCategoryEnum.TERMINAL;
+    }
+
+    /** 逐层解包到根因（兼容 Spring AI 的 ToolExecutionException 包装）。 */
+    private Throwable unwrap(Throwable error) {
+        Throwable cur = error;
+        while (cur.getCause() != null && cur.getCause() != cur) {
+            cur = cur.getCause();
+        }
+        return cur;
     }
 
     private boolean isTimeoutLike(Throwable error) {

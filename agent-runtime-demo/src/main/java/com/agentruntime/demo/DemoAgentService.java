@@ -19,6 +19,9 @@ import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.memory.CompactConfig;
 import com.agentruntime.api.memory.ToolCompactionPolicyRegistry;
 import com.agentruntime.api.memory.ToolCompactionRule;
+import com.agentruntime.core.tool.BackoffPolicy;
+import com.agentruntime.core.tool.ToolMeta;
+import com.agentruntime.core.tool.ToolMetaRegistry;
 import com.agentruntime.memory.chat.CompactingChatMemory;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
 import com.agentruntime.runtime.AgentRuntime;
@@ -44,7 +47,12 @@ public class DemoAgentService {
     public DemoAgentService(ChatModel chatModel,
                             CompactingChatMemoryFactory memoryFactory,
                             AgentRuntimeFactory agentFactory,
-                            BusinessTool businessTool) {
+                            BusinessTool businessTool,
+                            BadCaseTool badCaseTool,
+                            ToolMetaRegistry toolMetaRegistry) {
+        // 注册 badcase 工具治理元数据：幂等性 + 重试次数 + 单调用超时
+        registerBadCaseMetas(toolMetaRegistry);
+
         // 工具压缩策略：查询类工具完结即清
         ToolCompactionPolicyRegistry policyRegistry = ToolCompactionPolicyRegistry.withDefaults();
         policyRegistry.register(ToolCompactionRule.clearable("query_user_info"));
@@ -67,16 +75,55 @@ public class DemoAgentService {
                         你是我司的客服助手。你可以：
                         1. 查询用户信息
                         2. 查询用户的订单
+                        3. 调用 badcase 工具做故障演练（flaky_idempotent_lookup / slow_timeout_tool /
+                           terminal_bad_param / ambiguous_non_idempotent_charge）
                         请用友好、专业的语气回答用户问题。
                         """)
                 .defaultOptions(OpenAiChatOptions.builder().temperature(0.7).build())
-                .tools(businessTool)
+                .tools(businessTool, badCaseTool)
                 .memory(memory)
                 .listener(AgentLifecycleListener.onFinished(event -> {
                     log.info("session finished: agent={}, duration={}",
                             event.getSession().getAgentName(), event.getSession().getDuration());
                 }))
                 .build();
+    }
+
+    /** 注册 badcase 工具的治理元数据，供 GovernedToolCallback 重试/超时使用。 */
+    private void registerBadCaseMetas(ToolMetaRegistry registry) {
+        // 幂等 + 3 次尝试 + 固定 200ms 退避：验证 TRANSIENT 自动重试
+        ToolMeta flaky = new ToolMeta();
+        flaky.setToolName("flaky_idempotent_lookup");
+        flaky.setIdempotent(true);
+        flaky.setMaxAttempts(3);
+        flaky.setBackoff(BackoffPolicy.fixed(200L));
+        flaky.setTimeoutMs(10000L);
+        registry.register(flaky);
+
+        // 超时 1s，实际睡 3s：验证单调用超时 + 中断
+        ToolMeta slow = new ToolMeta();
+        slow.setToolName("slow_timeout_tool");
+        slow.setIdempotent(true);
+        slow.setMaxAttempts(1);
+        slow.setTimeoutMs(1000L);
+        registry.register(slow);
+
+        // 幂等 + 3 次尝试，但抛 IllegalArgumentException（TERMINAL）：验证终态不重试
+        ToolMeta terminal = new ToolMeta();
+        terminal.setToolName("terminal_bad_param");
+        terminal.setIdempotent(true);
+        terminal.setMaxAttempts(3);
+        terminal.setBackoff(BackoffPolicy.fixed(100L));
+        registry.register(terminal);
+
+        // 非幂等 + 3 次尝试，抛 SocketTimeoutException（AMBIGUOUS）：验证非幂等超时不重试
+        ToolMeta ambiguous = new ToolMeta();
+        ambiguous.setToolName("ambiguous_non_idempotent_charge");
+        ambiguous.setIdempotent(false);
+        ambiguous.setMaxAttempts(3);
+        ambiguous.setBackoff(BackoffPolicy.fixed(100L));
+        ambiguous.setTimeoutMs(5000L);
+        registry.register(ambiguous);
     }
 
     /**

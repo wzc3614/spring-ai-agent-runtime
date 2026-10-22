@@ -110,11 +110,15 @@ public class AgentRuntimeBuilder {
             builder.defaultOptions(defaultOptions);
         }
         if (tools != null && tools.length > 0) {
-            // 解析 + 包观测装饰器，按 prompt 传递（AgentRuntime.call 里 spec.tools(wrapped)）
+            // 解析 + 包装：raw -> GovernedToolCallback(重试/分类) -> ObservabilityToolCallback(span/事件)
+            // 观测在最外层，一次逻辑工具调用对应一个 TOOL_CALL span，重试作为 span 内事件
             ToolCallback[] callbacks = new ToolObjectResolver().resolve(tools);
             List<ToolCallback> wrapped = new ArrayList<>(callbacks.length);
             for (ToolCallback callback : callbacks) {
-                wrapped.add(new ObservabilityToolCallback(callback, factory.getRecorder(), factory.getObjectMapper()));
+                ToolCallback governed = new com.agentruntime.core.tool.GovernedToolCallback(callback,
+                        factory.getToolMetaRegistry(), factory.getToolFailureClassifier(),
+                        factory.getGovernanceDefaults());
+                wrapped.add(new ObservabilityToolCallback(governed, factory.getRecorder(), factory.getObjectMapper()));
             }
             resolvedTools = wrapped;
         }
