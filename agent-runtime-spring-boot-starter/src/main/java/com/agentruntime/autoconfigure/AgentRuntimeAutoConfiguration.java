@@ -39,6 +39,7 @@ import com.agentruntime.observability.stream.RedisStreamObservabilitySink;
 import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.LocalTokenEstimator;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
+import com.agentruntime.memory.compaction.SummaryExecutor;
 import com.agentruntime.memory.persistence.jdbc.JdbcMessageRepository;
 import com.agentruntime.memory.persistence.jdbc.JdbcSessionRepository;
 import com.agentruntime.memory.persistence.jdbc.JdbcSummarySnapshotRepository;
@@ -148,14 +149,26 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public SummaryExecutor summaryExecutor() {
+        return new SummaryExecutor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public CompactingChatMemoryFactory compactingChatMemoryFactory(MessageWritePolicy writePolicy,
                                                                      SessionSeqProvider seqProvider,
                                                                      MemoryWriteQueue writeQueue,
                                                                      MessageRepository messageRepository,
                                                                      TokenEstimator tokenEstimator,
-                                                                     ObjectMapper objectMapper) {
+                                                                     ObjectMapper objectMapper,
+                                                                     SummarySnapshotRepository summarySnapshotRepository,
+                                                                     BudgetCalculator budgetCalculator,
+                                                                     SummaryExecutor summaryExecutor,
+                                                                     StringRedisTemplate redisTemplate,
+                                                                     ObservabilityRecorder recorder) {
         return new CompactingChatMemoryFactory(writePolicy, seqProvider, writeQueue, messageRepository,
-                tokenEstimator, objectMapper);
+                tokenEstimator, objectMapper, summarySnapshotRepository, budgetCalculator,
+                summaryExecutor, redisTemplate, recorder);
     }
 
     @Bean
@@ -165,9 +178,10 @@ public class AgentRuntimeAutoConfiguration {
                                                     ObjectMapper objectMapper,
                                                     com.agentruntime.core.tool.ToolMetaRegistry toolMetaRegistry,
                                                     com.agentruntime.api.spi.ToolFailureClassifier toolFailureClassifier,
-                                                    com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults) {
+                                                    com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults,
+                                                    TokenEstimator tokenEstimator) {
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
-                toolMetaRegistry, toolFailureClassifier, governanceDefaults);
+                toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator);
     }
 
     // ----- Observability -----

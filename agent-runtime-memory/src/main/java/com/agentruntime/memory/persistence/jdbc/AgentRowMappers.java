@@ -69,6 +69,9 @@ public final class AgentRowMappers {
                 snapshot.setSessionId(rs.getString("session_id"));
                 snapshot.setVersion(rs.getInt("version"));
                 snapshot.setSections(rs.getString("sections"));
+                snapshot.setSummarizedUpToSeq(rs.getLong("summarized_up_to_seq"));
+                snapshot.setStatus(rs.getString("status"));
+                snapshot.setErrorMessage(rs.getString("error_message"));
                 snapshot.setUpdatedAt(JdbcUtils.toInstant(rs.getTimestamp("updated_at")));
                 return snapshot;
             };

@@ -26,11 +26,11 @@ import com.agentruntime.memory.chat.CompactingChatMemory;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
 import com.agentruntime.runtime.AgentRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
-import org.springframework.ai.openai.OpenAiChatOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -44,7 +44,8 @@ public class DemoAgentService {
 
     private final AgentRuntime agent;
 
-    public DemoAgentService(ChatModel chatModel,
+    public DemoAgentService(@Qualifier(ChatModelConfig.MAIN_CHAT_MODEL) ChatModel chatModel,
+                            @Qualifier(ChatModelConfig.COMPACT_CHAT_MODEL) ChatModel compactModel,
                             CompactingChatMemoryFactory memoryFactory,
                             AgentRuntimeFactory agentFactory,
                             BusinessTool businessTool,
@@ -58,11 +59,11 @@ public class DemoAgentService {
         policyRegistry.register(ToolCompactionRule.clearable("query_user_info"));
         policyRegistry.register(ToolCompactionRule.clearable("query_recent_orders"));
 
-        // 压缩配置（M1 仅存模型名 + 预算参数）
-        CompactConfig config = CompactConfig.ofModel("gpt-4o-mini");
+        // 压缩配置（基础版：仅预算参数，压缩用模型即注入的 flashChatModel）
+        CompactConfig config = CompactConfig.defaults();
 
         // 记忆
-        CompactingChatMemory memory = memoryFactory.builder(chatModel)
+        CompactingChatMemory memory = memoryFactory.builder(compactModel)
                 .config(config)
                 .policyRegistry(policyRegistry)
                 .build();

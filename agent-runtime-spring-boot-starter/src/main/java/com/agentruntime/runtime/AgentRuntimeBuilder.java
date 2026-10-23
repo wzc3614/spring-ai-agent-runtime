@@ -128,6 +128,7 @@ public class AgentRuntimeBuilder {
         }
         ChatClient chatClient = builder.build();
         return new AgentRuntime(chatClient, agentName, agentVersion, memory, spillConfig, listener,
-                factory.getSessionRepository(), factory.getRecorder(), resolvedTools);
+                factory.getSessionRepository(), factory.getRecorder(), resolvedTools,
+                defaultSystem, factory.getTokenEstimator());
     }
 }

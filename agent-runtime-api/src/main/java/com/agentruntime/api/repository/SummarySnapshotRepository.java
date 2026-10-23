@@ -25,12 +25,20 @@ import java.util.Optional;
 public interface SummarySnapshotRepository {
 
     /**
-     * 查询会话当前最新版本的摘要。
+     * 查询会话当前最新版本的摘要（含 FAILED，用于递增 version）。
      *
      * @param sessionId 会话 ID
      * @return 最新摘要
      */
     Optional<SummarySnapshot> findLatest(String sessionId);
+
+    /**
+     * 查询会话最新可用摘要（排除 FAILED，读侧注入与压缩边界以此为准）。
+     *
+     * @param sessionId 会话 ID
+     * @return 最新可用摘要
+     */
+    Optional<SummarySnapshot> findLatestUsable(String sessionId);
 
     /**
      * 保存为新版本（version = 旧版本 + 1，无旧版本则为 1）。

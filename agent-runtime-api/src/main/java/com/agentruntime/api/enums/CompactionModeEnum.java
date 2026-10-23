@@ -26,7 +26,7 @@ public enum CompactionModeEnum {
     /** 第二层：工具结果微压缩（纯内存，不调 LLM） */
     MICRO_COMPACTED("MICRO_COMPACTED", "micro compacted"),
 
-    /** 第三层：九段式 LLM 结构化摘要 */
+    /** 第三层：LLM 结构化摘要（按信息类型分层） */
     SUMMARIZED("SUMMARIZED", "summarized");
 
     private final String code;

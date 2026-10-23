@@ -24,7 +24,7 @@
  *
  * <p>Subpackages:
  * <ul>
- *   <li>{@code domain} &mdash; AgentSession, AgentMessage, SummarySnapshot, SummarySections,
+ *   <li>{@code domain} &mdash; AgentSession, AgentMessage, SummarySnapshot, SummaryContent,
  *       ToolCall, SpillRecord, ApprovalRecord, Span, EventRecord</li>
  *   <li>{@code enums} &mdash; status / role / risk / failure / span / event / compaction enums</li>
  *   <li>{@code repository} &mdash; data-access ports (xxRepository) backed by the agent_* tables</li>

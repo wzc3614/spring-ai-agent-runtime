@@ -30,7 +30,10 @@ public enum MessageRoleEnum {
     ASSISTANT("assistant", "assistant"),
 
     /** 工具结果消息 */
-    TOOL("tool", "tool");
+    TOOL("tool", "tool"),
+
+    /** 压缩摘要消息（运行时注入，不落 agent_message 表，标识一段对话历史的摘要） */
+    COMPACTION("compaction", "compaction summary");
 
     private final String code;
     private final String desc;

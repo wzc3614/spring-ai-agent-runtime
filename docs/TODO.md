@@ -1,6 +1,6 @@
 # Agent Runtime 待办与状态
 
-> 最后更新：2026-10-18（ID 模型修正：补 uid + 两层 ID 落地 + 流式 context-propagation；编排原语层记入 TODO 暂缓）
+> 最后更新：2026-10-23（基础版 LLM 摘要记忆落地：异步压缩 + Compaction 角色 + ChatHistorySummarizer SPI；放弃九段式）
 > 最后更新：2026-10-17（端到端全通：工具调用+观测 span 树完整；修 4 个 bug）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并 demo 验证并行生效）
 > 状态图例：`[ ]` 待办 / `[~]` 进行中 / `[x]` 完成 / `[-]` 暂缓
@@ -28,9 +28,10 @@
 
 ### B. Memory 补齐
 - [ ] B1 把 `MicroCompactor` 接进 `CompactingChatMemory.get()`
-- [ ] B2 九段式 LLM 摘要 + 增量合并更新（M3）
+- [x] B2 基础版 LLM 摘要（放弃九段式）：历史超预算时异步调 `ChatModel` 压缩为一段摘要，存 `agent_summary_snapshot`（`sections` 通用 JSON + `summarized_up_to_seq` 边界，V4 迁移）；读侧注入 `CompactionMessage`（新 `MessageRoleEnum.COMPACTION`，借 `MessageType.SYSTEM`）；`ChatHistorySummarizer` SPI 供用户自定义；`MemoryBudgetContextHolder` 由 `AgentRuntime` 写入 fixedOverhead；per-session Redis 锁 + double-check，失败不重试
 - [ ] B3 异步写入路径实测验证（worker 排空 / Redis seq 初始化 / A1 读侧合并）
 - [ ] B4 `MessageWritePolicy` 用户扩展示例/文档
+- [ ] B5 摘要路径实测验证（长对话触发压缩 / 下一轮注入 summary / 并发不重复压缩 / 失败不重试）
 
 ### C. Spill（M2，未建）
 - [ ] C1 `SpillGuardToolCallback`
@@ -84,7 +85,7 @@
 - [-] I3 `chatFor(sessionId)` — 返回已挂记忆 advisor、绑好 sessionId 的 `ChatClient`（省 advisor 样板）
 - [-] I4 ChatClient 注册表 + `chatClient(name)` — 多 provider 按名取，每个经 `ObservingChatModel` 装饰
 - [-] I5 `call/stream` 内部重构为原语的默认组合（行为不变，代码复用）
-- [-] I6 `ObservingChatModel.stream()` 补流式埋点（MODEL_CALL span 在流式下的开/关 + token 累积）
+- [x] I6 `ObservingChatModel.stream()` 补流式埋点（MODEL_CALL span 在流式下的开/关 + token 累积）
 - [-] I7 `ensureStarted` 公开 + 并发语义加固（`computeIfAbsent` 或锁，应对用户自调 `openTurn` 的竞态）
 - [-] I8 langchain4j 接入路 1（框架无关服务 + 手动埋点）/ 路 2（model 适配器）
 - [-] I9 `WorkflowTemplate` 脚手架（多 TURN + 记忆 + 事件，样板重复过多再抽）

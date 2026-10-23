@@ -15,6 +15,7 @@
  */
 package com.agentruntime.autoconfigure;
 
+import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
 
 import io.micrometer.context.ContextRegistry;
@@ -38,6 +39,7 @@ public class ReactorContextPropagationAutoConfiguration {
     @PostConstruct
     void enableContextPropagation() {
         SpanContextHolder.registerThreadLocalAccessors(ContextRegistry.getInstance());
+        MemoryBudgetContextHolder.registerThreadLocalAccessor(ContextRegistry.getInstance());
         Hooks.enableAutomaticContextPropagation();
     }
 }

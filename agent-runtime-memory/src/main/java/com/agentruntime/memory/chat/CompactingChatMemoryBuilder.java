@@ -15,6 +15,7 @@
  */
 package com.agentruntime.memory.chat;
 
+import com.agentruntime.api.memory.ChatHistorySummarizer;
 import com.agentruntime.api.memory.CompactConfig;
 import com.agentruntime.api.memory.ToolCompactionPolicyRegistry;
 import org.springframework.ai.chat.model.ChatModel;
@@ -32,6 +33,9 @@ public class CompactingChatMemoryBuilder {
     private CompactConfig config;
 
     private ToolCompactionPolicyRegistry policyRegistry;
+
+    /** 用户自定义摘要器（null 时用默认 LLM 实现） */
+    private ChatHistorySummarizer summarizer;
 
     public CompactingChatMemoryBuilder(CompactingChatMemoryFactory factory, ChatModel chatModel) {
         this.factory = factory;
@@ -61,15 +65,26 @@ public class CompactingChatMemoryBuilder {
     }
 
     /**
+     * 设置自定义对话历史摘要器（覆盖默认 LLM 实现）。
+     *
+     * @param summarizer 摘要器
+     * @return this
+     */
+    public CompactingChatMemoryBuilder summarizer(ChatHistorySummarizer summarizer) {
+        this.summarizer = summarizer;
+        return this;
+    }
+
+    /**
      * 构建。
      *
      * @return CompactingChatMemory
      */
     public CompactingChatMemory build() {
-        CompactConfig effectiveConfig = config != null ? config : CompactConfig.ofModel(null);
+        CompactConfig effectiveConfig = config != null ? config : CompactConfig.defaults();
         ToolCompactionPolicyRegistry effectiveRegistry = policyRegistry != null
                 ? policyRegistry
                 : ToolCompactionPolicyRegistry.withDefaults();
-        return factory.create(chatModel, effectiveConfig, effectiveRegistry);
+        return factory.create(chatModel, effectiveConfig, effectiveRegistry, summarizer);
     }
 }

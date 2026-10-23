@@ -30,7 +30,10 @@ public enum SpanTypeEnum {
     MODEL_CALL("MODEL_CALL", "model call"),
 
     /** 一次工具调用 */
-    TOOL_CALL("TOOL_CALL", "tool call");
+    TOOL_CALL("TOOL_CALL", "tool call"),
+
+    /** 一次记忆压缩 */
+    COMPACTION("COMPACTION", "compaction");
 
     private final String code;
     private final String desc;

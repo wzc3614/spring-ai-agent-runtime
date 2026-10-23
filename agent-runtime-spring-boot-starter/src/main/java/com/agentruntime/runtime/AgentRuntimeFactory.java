@@ -17,6 +17,7 @@ package com.agentruntime.runtime;
 
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
+import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.api.spi.ToolFailureClassifier;
 import com.agentruntime.core.tool.ToolGovernanceDefaults;
 import com.agentruntime.core.tool.ToolMetaRegistry;
@@ -41,17 +42,21 @@ public class AgentRuntimeFactory {
 
     private final ToolGovernanceDefaults governanceDefaults;
 
+    private final TokenEstimator tokenEstimator;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
                                ObservabilityRecorder recorder, ObjectMapper objectMapper,
                                ToolMetaRegistry toolMetaRegistry,
                                ToolFailureClassifier toolFailureClassifier,
-                               ToolGovernanceDefaults governanceDefaults) {
+                               ToolGovernanceDefaults governanceDefaults,
+                               TokenEstimator tokenEstimator) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
         this.toolMetaRegistry = toolMetaRegistry;
         this.toolFailureClassifier = toolFailureClassifier;
         this.governanceDefaults = governanceDefaults;
+        this.tokenEstimator = tokenEstimator;
     }
 
     /**
@@ -86,5 +91,9 @@ public class AgentRuntimeFactory {
 
     public ToolGovernanceDefaults getGovernanceDefaults() {
         return governanceDefaults;
+    }
+
+    public TokenEstimator getTokenEstimator() {
+        return tokenEstimator;
     }
 }

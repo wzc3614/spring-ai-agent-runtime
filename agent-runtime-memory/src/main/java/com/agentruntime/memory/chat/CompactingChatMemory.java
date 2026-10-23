@@ -16,15 +16,25 @@
 package com.agentruntime.memory.chat;
 
 import com.agentruntime.api.domain.AgentMessage;
+import com.agentruntime.api.domain.SummaryContent;
+import com.agentruntime.api.domain.SummarySnapshot;
+import com.agentruntime.api.enums.SummaryStatusEnum;
 import com.agentruntime.api.memory.CompactConfig;
 import com.agentruntime.api.memory.MessageWritePolicy;
 import com.agentruntime.api.memory.SessionSeqProvider;
 import com.agentruntime.api.memory.ToolCompactionPolicyRegistry;
 import com.agentruntime.api.repository.MessageRepository;
+import com.agentruntime.api.repository.SummarySnapshotRepository;
 import com.agentruntime.api.spi.TokenEstimator;
+import com.agentruntime.core.springai.MemoryBudgetContextHolder;
+import com.agentruntime.memory.budget.BudgetCalculator;
+import com.agentruntime.memory.budget.BudgetResult;
+import com.agentruntime.memory.compaction.SummaryCompactor;
+import com.agentruntime.memory.compaction.SummaryExecutor;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.WriteTask;
 import com.agentruntime.memory.write.WriteTaskIdGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -42,8 +52,9 @@ import java.util.UUID;
  * 压缩式对话记忆，实现 Spring AI {@link ChatMemory}。
  *
  * <p>写路径：add() 把每条消息编码为存储信封，经 Redis 分配 seq 后入异步队列（读写分离）。
- * 读路径：get() 合并 DB 历史 + Redis 队列未消费任务，按预算保留最近消息后解码返回。
- * M1 暂不接微压缩/LLM 摘要（超预算时保留最近 N 条 + warn）。
+ * 读路径：get() 合并 DB 历史 + Redis 队列未消费任务，若存在可用摘要快照则渲染为
+ * {@link CompactionMessage} 注入并仅取摘要边界之后的历史；按预算保留最近消息后解码返回。
+ * 当预算超阈值时，异步触发 {@link SummaryCompactor} 压缩（fire-and-forget，不阻塞主流程）。
  */
 public class CompactingChatMemory implements ChatMemory {
 
@@ -58,11 +69,19 @@ public class CompactingChatMemory implements ChatMemory {
     private final MessageRepository messageRepository;
     private final TokenEstimator tokenEstimator;
     private final MessageConverter messageConverter;
+    private final SummarySnapshotRepository summaryRepository;
+    private final SummaryCompactor summaryCompactor;
+    private final BudgetCalculator budgetCalculator;
+    private final SummaryExecutor summaryExecutor;
+    private final ObjectMapper objectMapper;
 
     public CompactingChatMemory(ChatModel chatModel, CompactConfig config, ToolCompactionPolicyRegistry policyRegistry,
                                  MessageWritePolicy writePolicy, SessionSeqProvider seqProvider,
                                  MemoryWriteQueue writeQueue, MessageRepository messageRepository,
-                                 TokenEstimator tokenEstimator, MessageConverter messageConverter) {
+                                 TokenEstimator tokenEstimator, MessageConverter messageConverter,
+                                 SummarySnapshotRepository summaryRepository, SummaryCompactor summaryCompactor,
+                                 BudgetCalculator budgetCalculator, SummaryExecutor summaryExecutor,
+                                 ObjectMapper objectMapper) {
         this.chatModel = chatModel;
         this.config = config;
         this.policyRegistry = policyRegistry;
@@ -72,6 +91,11 @@ public class CompactingChatMemory implements ChatMemory {
         this.messageRepository = messageRepository;
         this.tokenEstimator = tokenEstimator;
         this.messageConverter = messageConverter;
+        this.summaryRepository = summaryRepository;
+        this.summaryCompactor = summaryCompactor;
+        this.budgetCalculator = budgetCalculator;
+        this.summaryExecutor = summaryExecutor;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -99,9 +123,33 @@ public class CompactingChatMemory implements ChatMemory {
     @Override
     public List<Message> get(String conversationId) {
         // 记忆按 session 共享：传入的 conversationId 实为 sessionId
-        List<AgentMessage> merged = loadAndMerge(conversationId);
-        List<AgentMessage> kept = keepByBudget(merged);
-        List<Message> result = new ArrayList<>(kept.size());
+        String sessionId = conversationId;
+        List<AgentMessage> merged = loadAndMerge(sessionId);
+        SummarySnapshot snapshot = summaryRepository.findLatestUsable(sessionId).orElse(null);
+        SummaryContent content = extractStructured(snapshot);
+        boolean hasSummary = isUsable(content);
+        long boundary = snapshot != null ? snapshot.getSummarizedUpToSeq() : 0L;
+
+        // 选择注入的历史：有摘要只取边界之后，无摘要取全部
+        List<AgentMessage> historyMessages = hasSummary ? tailAfter(merged, boundary) : merged;
+
+        // 预算判定 + 异步触发压缩（fire-and-forget，不阻塞）
+        int summaryTokens = hasSummary ? tokenEstimator.estimate(new CompactionMessage(content).getText()) : 0;
+        int historyTokens = tokenEstimator.estimateMessages(historyMessages);
+        int fixedOverhead = MemoryBudgetContextHolder.fixedOverhead();
+        BudgetResult budget = budgetCalculator.compute(config, fixedOverhead, summaryTokens, historyTokens);
+        if (budget.isTriggerCompaction() && !summaryCompactor.isCompacting(sessionId)) {
+            summaryExecutor.submit(() -> summaryCompactor.compact(sessionId));
+        }
+
+        // 兜底截断：超预算时从最早历史截断（保留 summary 不丢）
+        List<AgentMessage> kept = keepByBudget(historyMessages, summaryTokens);
+
+        // 组装结果：摘要在前 + 历史解码
+        List<Message> result = new ArrayList<>(kept.size() + 1);
+        if (hasSummary) {
+            result.add(new CompactionMessage(content));
+        }
         for (AgentMessage am : kept) {
             result.add(messageConverter.decode(am));
         }
@@ -125,19 +173,31 @@ public class CompactingChatMemory implements ChatMemory {
         return merged;
     }
 
+    /** 取 seq > boundary 的历史（摘要边界之后的原文） */
+    private List<AgentMessage> tailAfter(List<AgentMessage> merged, long boundary) {
+        List<AgentMessage> tail = new ArrayList<>();
+        for (AgentMessage m : merged) {
+            if (m.getSeq() > boundary) {
+                tail.add(m);
+            }
+        }
+        return tail;
+    }
+
     /**
-     * 预算兜底：从最近向最远累加 token，超出有效窗口则截断较早消息。M1 临时方案。
+     * 预算兜底：从最近向最远累加 token，超出历史预算则截断较早消息。历史预算需扣除固定开销与摘要占用。
      */
-    private List<AgentMessage> keepByBudget(List<AgentMessage> messages) {
+    private List<AgentMessage> keepByBudget(List<AgentMessage> messages, int summaryTokens) {
         int effectiveWindow = config.getContextWindow() - config.getReservedOutput() - config.getSafetyBuffer();
-        if (effectiveWindow <= 0 || messages.isEmpty()) {
+        int historyBudget = effectiveWindow - MemoryBudgetContextHolder.fixedOverhead() - summaryTokens;
+        if (historyBudget <= 0 || messages.isEmpty()) {
             return messages;
         }
         int accumulated = 0;
         int cutFrom = 0;
         for (int i = messages.size() - 1; i >= 0; i--) {
             int tokens = tokenEstimator.estimate(messages.get(i).getContent());
-            if (accumulated + tokens > effectiveWindow) {
+            if (accumulated + tokens > historyBudget) {
                 cutFrom = i + 1;
                 break;
             }
@@ -149,6 +209,37 @@ public class CompactingChatMemory implements ChatMemory {
             return new ArrayList<>(messages.subList(cutFrom, messages.size()));
         }
         return messages;
+    }
+
+    /**
+     * 解析快照为结构化摘要。FAILED 状态视为无可用摘要，读侧回退到全量原文。
+     *
+     * @param snapshot 最新快照
+     * @return 结构化内容，解析失败或 FAILED 时返回 null
+     */
+    private SummaryContent extractStructured(SummarySnapshot snapshot) {
+        if (snapshot == null || snapshot.getSections() == null) {
+            return null;
+        }
+        if (SummaryStatusEnum.FAILED.getCode().equals(snapshot.getStatus())) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(snapshot.getSections(), SummaryContent.class);
+        } catch (Exception e) {
+            log.warn("parse summary sections failed, fallback to null, sessionId={}",
+                    snapshot.getSessionId(), e);
+            return null;
+        }
+    }
+
+    /** 结构化字段或一段式 summary 任一非空即视为可用 */
+    private boolean isUsable(SummaryContent content) {
+        if (content == null) {
+            return false;
+        }
+        return !content.isStructuredEmpty()
+                || (content.getSummary() != null && !content.getSummary().isBlank());
     }
 
     private WriteTask newTask(String sessionId, String turnId, String messageId,

@@ -27,6 +27,8 @@ import com.agentruntime.api.lifecycle.SessionInfo;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
 import com.agentruntime.api.spill.SpillConfig;
+import com.agentruntime.api.spi.TokenEstimator;
+import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
 import com.agentruntime.memory.chat.CompactingChatMemory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -60,9 +62,16 @@ public class AgentRuntime {
     private final AgentLifecycleListener listener;
     private final SessionRepository sessionRepository;
     private final ObservabilityRecorder recorder;
+    private final TokenEstimator tokenEstimator;
 
     /** 包装后的工具（按 prompt 传递，确保进入请求的 tools 字段） */
     private final List<ToolCallback> tools;
+
+    /** 系统提示词（用于估算固定开销） */
+    private final String defaultSystem;
+
+    /** 工具 schema 的 token 估算（构造时一次性计算，避免每轮重复估算） */
+    private final int toolSchemaTokens;
 
     /** 会话开始时间，用于计算 duration */
     private final Map<String, Instant> startedAtMap = new ConcurrentHashMap<>();
@@ -76,7 +85,8 @@ public class AgentRuntime {
     public AgentRuntime(ChatClient chatClient, String agentName, String agentVersion,
                         CompactingChatMemory memory, SpillConfig spillConfig,
                         AgentLifecycleListener listener, SessionRepository sessionRepository,
-                        ObservabilityRecorder recorder, List<ToolCallback> tools) {
+                        ObservabilityRecorder recorder, List<ToolCallback> tools,
+                        String defaultSystem, TokenEstimator tokenEstimator) {
         this.chatClient = chatClient;
         this.agentName = agentName;
         this.agentVersion = agentVersion;
@@ -86,6 +96,9 @@ public class AgentRuntime {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.tools = tools;
+        this.defaultSystem = defaultSystem;
+        this.tokenEstimator = tokenEstimator;
+        this.toolSchemaTokens = estimateToolSchemaTokens(tools);
     }
 
     /**
@@ -101,6 +114,7 @@ public class AgentRuntime {
         String sessionSpanId = sessionSpanIds.get(sessionId);
         Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
         SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
+        MemoryBudgetContextHolder.set(estimateFixedOverhead(userText));
         try {
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
             ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userText);
@@ -114,6 +128,7 @@ public class AgentRuntime {
             recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY, reply);
             return reply;
         } finally {
+            MemoryBudgetContextHolder.clear();
             SpanContextHolder.clear();
             recorder.endSpan(turnSpan.getSpanId());
         }
@@ -137,6 +152,7 @@ public class AgentRuntime {
             String sessionSpanId = sessionSpanIds.get(sessionId);
             Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
             SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
+            MemoryBudgetContextHolder.set(estimateFixedOverhead(userText));
             StringBuilder accumulated = new StringBuilder();
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
             ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userText);
@@ -151,6 +167,7 @@ public class AgentRuntime {
                     .doOnComplete(() -> recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY,
                             accumulated.toString()))
                     .doFinally(s -> {
+                        MemoryBudgetContextHolder.clear();
                         SpanContextHolder.clear();
                         recorder.endSpan(turnSpan.getSpanId());
                     })
@@ -245,5 +262,36 @@ public class AgentRuntime {
 
     public SpillConfig getSpillConfig() {
         return spillConfig;
+    }
+
+    /**
+     * 估算当前轮固定开销 token：系统提示词 + 工具 schema + 当前用户输入。
+     * 在调用 ChatClient 前写入 {@link MemoryBudgetContextHolder}，供记忆层动态预算计算读取。
+     *
+     * @param userText 当前用户输入
+     * @return 固定开销 token 估算
+     */
+    private int estimateFixedOverhead(String userText) {
+        int systemTokens = defaultSystem == null ? 0 : tokenEstimator.estimate(defaultSystem);
+        int userTokens = userText == null ? 0 : tokenEstimator.estimate(userText);
+        return systemTokens + toolSchemaTokens + userTokens;
+    }
+
+    /**
+     * 估算一组工具的 schema token（name + description + inputSchema JSON）。
+     * 构造时一次性计算，避免每轮重复估算。
+     */
+    private int estimateToolSchemaTokens(List<ToolCallback> callbacks) {
+        if (CollectionUtils.isEmpty(callbacks)) {
+            return 0;
+        }
+        int total = 0;
+        for (ToolCallback callback : callbacks) {
+            org.springframework.ai.tool.definition.ToolDefinition def = callback.getToolDefinition();
+            total += tokenEstimator.estimate(def.name());
+            total += tokenEstimator.estimate(def.description());
+            total += tokenEstimator.estimateJson(def.inputSchema());
+        }
+        return total;
     }
 }

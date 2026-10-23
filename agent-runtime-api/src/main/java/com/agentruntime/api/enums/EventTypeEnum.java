@@ -33,7 +33,10 @@ public enum EventTypeEnum {
     TOOL_OUTPUT("TOOL_OUTPUT", "tool output"),
 
     /** 错误 */
-    ERROR("ERROR", "error");
+    ERROR("ERROR", "error"),
+
+    /** 记忆压缩失败（不驱逐对应 Turn，仅可观测） */
+    COMPACTION_FAILED("COMPACTION_FAILED", "compaction failed");
 
     private final String code;
     private final String desc;

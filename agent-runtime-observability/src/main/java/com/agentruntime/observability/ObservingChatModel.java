@@ -33,7 +33,9 @@ import java.util.Map;
  * 观测式 ChatModel 装饰器：每次 LLM 调用建一个 MODEL_CALL（LlmCallSpan），
  * 从响应元数据采集 modelName/finishReason/inputTokens/outputTokens 写入 span 属性。
  * 父 span 与 sessionId 来自 {@link SpanContextHolder}（由编排器在调用前设置）。
- * 流式路径暂不埋点（后续接）。
+ *
+ * <p>同步 {@link #call} 与流式 {@link #stream} 对称埋点。流式在订阅时开 span，
+ * 随 chunk 累积 usage/finishReason（以后到的非空值为准），在 complete/error/cancel 时关 span。
  */
 public class ObservingChatModel implements ChatModel {
 
@@ -64,33 +66,42 @@ public class ObservingChatModel implements ChatModel {
 
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
-        // 流式埋点暂缓，直接委托
-        return delegate.stream(prompt);
+        // defer：订阅时才开 span，避免未订阅的 Flux 泄漏；reactor 线程上 ThreadLocal 已由 context-propagation 恢复
+        return Flux.defer(() -> {
+            Span span = recorder.startSpan(SpanTypeEnum.MODEL_CALL, SpanContextHolder.parentSpanId(),
+                    SpanContextHolder.sessionId());
+            StreamUsageAccumulator accumulator = new StreamUsageAccumulator();
+            return delegate.stream(prompt)
+                    .doOnNext(accumulator::accept)
+                    .doFinally(signal -> {
+                        applyAttributes(span, prompt, accumulator);
+                        recorder.endSpan(span.getSpanId());
+                    });
+        });
     }
 
     private void applyAttributes(Span span, Prompt prompt, ChatResponse response) {
+        StreamUsageAccumulator accumulator = new StreamUsageAccumulator();
+        accumulator.accept(response);
+        applyAttributes(span, prompt, accumulator);
+    }
+
+    private void applyAttributes(Span span, Prompt prompt, StreamUsageAccumulator accumulator) {
         Map<String, Object> attrs = new LinkedHashMap<>();
         if (prompt.getOptions() != null && prompt.getOptions().getModel() != null) {
             attrs.put("modelName", prompt.getOptions().getModel());
         }
-        if (response != null && response.getMetadata() != null) {
-            if (response.getMetadata().getModel() != null) {
-                attrs.put("modelName", response.getMetadata().getModel());
-            }
-            Usage usage = response.getMetadata().getUsage();
-            if (usage != null) {
-                if (usage.getPromptTokens() != null) {
-                    attrs.put("inputTokens", usage.getPromptTokens());
-                }
-                if (usage.getCompletionTokens() != null) {
-                    attrs.put("outputTokens", usage.getCompletionTokens());
-                }
-            }
-            if (response.getResult() != null
-                    && response.getResult().getMetadata() != null
-                    && response.getResult().getMetadata().getFinishReason() != null) {
-                attrs.put("finishReason", response.getResult().getMetadata().getFinishReason());
-            }
+        if (accumulator.getModelName() != null) {
+            attrs.put("modelName", accumulator.getModelName());
+        }
+        if (accumulator.getInputTokens() != null) {
+            attrs.put("inputTokens", accumulator.getInputTokens());
+        }
+        if (accumulator.getOutputTokens() != null) {
+            attrs.put("outputTokens", accumulator.getOutputTokens());
+        }
+        if (accumulator.getFinishReason() != null) {
+            attrs.put("finishReason", accumulator.getFinishReason());
         }
         span.setAttributes(toJson(attrs));
     }
@@ -103,6 +114,65 @@ public class ObservingChatModel implements ChatModel {
             return objectMapper.writeValueAsString(attrs);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /**
+     * 流式 chunk 的 usage 累积器：以后到的非空 modelName / tokens / finishReason 覆盖。
+     * 多数网关只在最后一个 chunk 带 usage，这样能拿到完整值。
+     */
+    private static class StreamUsageAccumulator {
+
+        private String modelName;
+        private Integer inputTokens;
+        private Integer outputTokens;
+        private String finishReason;
+
+        void accept(ChatResponse response) {
+            if (response == null || response.getMetadata() == null) {
+                acceptFinishReason(response);
+                return;
+            }
+            if (response.getMetadata().getModel() != null) {
+                this.modelName = response.getMetadata().getModel();
+            }
+            Usage usage = response.getMetadata().getUsage();
+            if (usage != null) {
+                if (usage.getPromptTokens() != null) {
+                    this.inputTokens = usage.getPromptTokens();
+                }
+                if (usage.getCompletionTokens() != null) {
+                    this.outputTokens = usage.getCompletionTokens();
+                }
+            }
+            acceptFinishReason(response);
+        }
+
+        private void acceptFinishReason(ChatResponse response) {
+            if (response == null || response.getResult() == null
+                    || response.getResult().getMetadata() == null) {
+                return;
+            }
+            String reason = response.getResult().getMetadata().getFinishReason();
+            if (reason != null) {
+                this.finishReason = reason;
+            }
+        }
+
+        String getModelName() {
+            return modelName;
+        }
+
+        Integer getInputTokens() {
+            return inputTokens;
+        }
+
+        Integer getOutputTokens() {
+            return outputTokens;
+        }
+
+        String getFinishReason() {
+            return finishReason;
         }
     }
 }
