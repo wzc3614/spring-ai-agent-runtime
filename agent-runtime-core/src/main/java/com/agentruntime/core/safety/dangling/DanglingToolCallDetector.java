@@ -27,29 +27,26 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 悬空工具调用检测器。加载历史时，若某 assistant 消息请求了 tool_calls 但缺少对应 tool 响应
- * （且不在有意悬空集合中），则剔除该消息，修复大模型消息协议违例（crash 恢复）。
- * HIL 的"等待审批"工具调用属于有意悬空，通过 intentionalPendingIds 跳过。
+ * 悬空工具调用检测器。加载历史时，若某 assistant 消息请求了 tool_calls 但缺少对应 tool 响应，
+ * 则剔除该消息，修复大模型消息协议违例（crash 恢复）。
  */
 public class DanglingToolCallDetector {
 
     /**
      * 修复历史消息，剔除悬空的 assistant tool_call 消息。
      *
-     * @param messages               原始历史消息
-     * @param intentionalPendingIds  有意悬空的 tool_call id 集合（HIL 等待审批），可为空
+     * @param messages 原始历史消息
      * @return 修复后的消息列表
      */
-    public List<Message> repair(List<Message> messages, Set<String> intentionalPendingIds) {
+    public List<Message> repair(List<Message> messages) {
         if (CollectionUtils.isEmpty(messages)) {
             return Collections.emptyList();
         }
-        Set<String> pending = intentionalPendingIds == null ? Collections.emptySet() : intentionalPendingIds;
         Set<String> resolved = collectResolvedToolCallIds(messages);
 
         List<Message> result = new ArrayList<>(messages.size());
         for (Message message : messages) {
-            if (isDanglingAssistant(message, resolved, pending)) {
+            if (isDanglingAssistant(message, resolved)) {
                 continue;
             }
             result.add(message);
@@ -72,7 +69,7 @@ public class DanglingToolCallDetector {
         return resolved;
     }
 
-    private boolean isDanglingAssistant(Message message, Set<String> resolved, Set<String> pending) {
+    private boolean isDanglingAssistant(Message message, Set<String> resolved) {
         if (!(message instanceof AssistantMessage)) {
             return false;
         }
@@ -83,7 +80,7 @@ public class DanglingToolCallDetector {
         List<AssistantMessage.ToolCall> toolCalls = assistant.getToolCalls();
         for (AssistantMessage.ToolCall toolCall : toolCalls) {
             String id = toolCall.id();
-            if (id == null || (!resolved.contains(id) && !pending.contains(id))) {
+            if (id == null || !resolved.contains(id)) {
                 return true;
             }
         }

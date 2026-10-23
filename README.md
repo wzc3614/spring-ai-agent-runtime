@@ -5,7 +5,7 @@
 
 ## 定位
 
-**AgentRuntime 不重造 Spring AI，也不跟编排层抢位置**——它是一层"运行时治理"，挂在 Spring AI 与业务 Agent 之间，只管单个 Agent 内部怎么活下去：记忆不漂移、大报文不击穿、推理可复盘、能力可热插拔、高风险可人工介入。
+**AgentRuntime 不重造 Spring AI，也不跟编排层抢位置**——它是一层"运行时治理"，挂在 Spring AI 与业务 Agent 之间，只管单个 Agent 内部怎么活下去：记忆不漂移、大报文不击穿、推理可复盘、能力可热插拔。
 
 落地形态是**嵌入式 Spring Boot Starter**：任意 Spring Boot + Spring AI 项目引入依赖即可用，不需要新搭一套平台。
 
@@ -29,7 +29,6 @@ memory       记忆（持久化 + 异步写入 + 微压缩 + 动态预算）
 observability 认知可观测（Span/Event 树 + 日志/JDBC Sink）
 spill        溢出保护（MinIO/S3，暂缓）
 capability   能力供给（Skill + MCP 热插拔，暂缓）
-hil          人工审批（暂缓）
 starter      自动装配 + AgentRuntime 编排器
 demo         端到端示例
 ```

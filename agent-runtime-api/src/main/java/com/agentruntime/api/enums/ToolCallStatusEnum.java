@@ -32,9 +32,6 @@ public enum ToolCallStatusEnum {
     /** 结果已溢出落盘 */
     SPILLED("SPILLED", "spilled"),
 
-    /** 等待人工审批 */
-    AWAITING_APPROVAL("AWAITING_APPROVAL", "awaiting approval"),
-
     /** 结果不确定（非幂等操作超时类失败，不可自动重试） */
     AMBIGUOUS("AMBIGUOUS", "ambiguous");
 

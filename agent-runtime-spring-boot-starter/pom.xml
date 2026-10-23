@@ -42,11 +42,6 @@
             <artifactId>agent-runtime-capability</artifactId>
             <optional>true</optional>
         </dependency>
-        <dependency>
-            <groupId>com.agentruntime</groupId>
-            <artifactId>agent-runtime-hil</artifactId>
-            <optional>true</optional>
-        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

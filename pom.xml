@@ -19,7 +19,7 @@
     <description>
         A Harness layer on top of Spring AI that keeps a single agent running stably in production:
         progressive memory compaction, spill guard, cognitive observability, capability hot-plug,
-        parallel tool coordination and human-in-the-loop approval.
+        and parallel tool coordination.
     </description>
 
     <properties>
@@ -36,7 +36,6 @@
         <module>agent-runtime-spill</module>
         <module>agent-runtime-observability</module>
         <module>agent-runtime-capability</module>
-        <module>agent-runtime-hil</module>
         <module>agent-runtime-spring-boot-starter</module>
         <module>agent-runtime-demo</module>
     </modules>
@@ -81,11 +80,6 @@
             <dependency>
                 <groupId>com.agentruntime</groupId>
                 <artifactId>agent-runtime-capability</artifactId>
-                <version>${agentruntime.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.agentruntime</groupId>
-                <artifactId>agent-runtime-hil</artifactId>
                 <version>${agentruntime.version}</version>
             </dependency>
             <dependency>

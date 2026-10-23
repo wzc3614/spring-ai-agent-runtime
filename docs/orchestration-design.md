@@ -8,7 +8,7 @@
 
 ## 1. 背景与目标
 
-当前 `AgentRuntime.call()/stream()` 是一个**封闭单轮管线**：它包办了「开 TURN span → set SpanContext → 建 `ChatClient` spec → 调用 → 记 FINAL_REPLY → 关 span」。用户无法在中间插入自己的步骤（RAG、改写、多步推理、人工审批等），也无法用别的编排框架（如 langchain4j）来组织流程。
+当前 `AgentRuntime.call()/stream()` 是一个**封闭单轮管线**：它包办了「开 TURN span → set SpanContext → 建 `ChatClient` spec → 调用 → 记 FINAL_REPLY → 关 span」。用户无法在中间插入自己的步骤（RAG、改写、多步推理等），也无法用别的编排框架（如 langchain4j）来组织流程。
 
 > 注：v0.2 之前的草案把入参叫 `sessionId`，实际它同时承担了"会话生命周期"和"记忆作用域"两个职责，是概念混淆。现已修正为两层 ID 模型（见 §3），调用签名改为 `call(uid, sessionId, userText)`。
 
@@ -402,4 +402,3 @@ public class LangChain4jChatModelAdapter implements ChatModel {
 - `WorkflowTemplate` 脚手架（若原语组合样板代码重复过多再抽）。
 - langchain4j model 适配器（路 2，按需）。
 - 编排流程的可视化回放（多 TURN span 树在 observability UI 上的展示）。
-- 编排级断点 / 人工审批节点（与 `hil` 模块联动）。

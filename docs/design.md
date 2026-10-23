@@ -1,6 +1,7 @@
 # Agent Runtime 设计文档
 
 > 版本：0.1（最小可用已跑通）
+> 最后更新：2026-10-23（移除 HIL 人工审批模块）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并验证并行生效）
 
 ## 1. 项目定位
@@ -28,20 +29,19 @@ memory     记忆子系统（持久化 + 异步写入 + 微压缩 + 动态预算
 spill      溢出保护（MinIO/S3，暂缓）
 observability 认知可观测（Span/Event 树 + 日志/JDBC Sink）
 capability 能力供给（Skill + MCP 热插拔，暂缓）
-hil        人工审批（暂缓）
 starter    自动装配 + AgentRuntime 编排器
 demo      端到端示例
 ```
 
-依赖方向（无环）：`api ← core ← {memory, spill, observability, capability, hil}`；`starter → core + 各子系统`；`demo → starter`。`AgentRuntime` 编排器放在 starter（不是 core），避免 core 既是"底座"又是"编排器"的循环依赖。
+依赖方向（无环）：`api ← core ← {memory, spill, observability, capability}`；`starter → core + 各子系统`；`demo → starter`。`AgentRuntime` 编排器放在 starter（不是 core），避免 core 既是"底座"又是"编排器"的循环依赖。
 
 ## 4. 各模块设计
 
 ### 4.1 api（契约层）
-- `domain`：9 个实体 POJO（`AgentSession`/`AgentMessage`/`SummarySnapshot`/`SummarySections`/`ToolCall`/`SpillRecord`/`ApprovalRecord`/`Span`/`EventRecord`），无参构造 + setter，JSON 字段统一 `String`，时间 `Instant`。
-- `enums`：9 个枚举（`SessionStatusEnum`/`MessageRoleEnum`/`ToolCallStatusEnum`/`RiskLevelEnum`/`FailureCategoryEnum`/`ApprovalStatusEnum`/`SpanTypeEnum`/`EventTypeEnum`/`CompactionModeEnum`），`code`+`desc`+`of(code)`。注意 `MessageRoleEnum` 用小写 code（`system/user/assistant/tool`）以对齐 Spring AI `MessageType.getValue()`。
-- `repository`：8 个数据访问端口（`SessionRepository` 含乐观锁、`MessageRepository`、`SummarySnapshotRepository`、`ToolCallRepository`、`SpillRecordRepository`、`ApprovalRepository`、`SpanRepository`、`EventRepository`）。
-- `spi`：5 个能力端口（`SpillStorage`、`TokenEstimator`、`ToolFailureClassifier`、`ApprovalNotifier`、`TransactionPort`）。
+- `domain`：8 个实体 POJO（`AgentSession`/`AgentMessage`/`SummarySnapshot`/`SummarySections`/`ToolCall`/`SpillRecord`/`Span`/`EventRecord`），无参构造 + setter，JSON 字段统一 `String`，时间 `Instant`。
+- `enums`：8 个枚举（`SessionStatusEnum`/`MessageRoleEnum`/`ToolCallStatusEnum`/`RiskLevelEnum`/`FailureCategoryEnum`/`SpanTypeEnum`/`EventTypeEnum`/`CompactionModeEnum`），`code`+`desc`+`of(code)`。注意 `MessageRoleEnum` 用小写 code（`system/user/assistant/tool`）以对齐 Spring AI `MessageType.getValue()`。
+- `repository`：7 个数据访问端口（`SessionRepository` 含乐观锁、`MessageRepository`、`SummarySnapshotRepository`、`ToolCallRepository`、`SpillRecordRepository`、`SpanRepository`、`EventRepository`）。
+- `spi`：4 个能力端口（`SpillStorage`、`TokenEstimator`、`ToolFailureClassifier`、`TransactionPort`）。
 - `lifecycle`：`AgentLifecycleEvent`/`SessionInfo`/`AgentLifecycleTypeEnum`（START/ENDED/CANCELLED/TIMED_OUT）/`AgentLifecycleListener`（含 `onFinished` 静态工厂）。
 - `memory`：`CompactConfig`（`ofModel`）/`ToolCompactionRule`（`clearable`）/`ToolCompactionPolicyRegistry`（`withDefaults`）/`SessionSeqProvider`/`MessageWritePolicy`。
 - `spill`：`SpillConfig`。
@@ -50,7 +50,7 @@ demo      端到端示例
 ### 4.2 core（共享内核）
 只依赖 api + Spring AI，**不依赖任何子系统**。放与具体后端无关的通用能力：
 - `concurrency.parallel.ParallelToolExecutor`：虚拟线程 + Semaphore 限并发，结果按入参顺序对齐。
-- `safety.dangling.DanglingToolCallDetector`：操作 Spring AI `Message` 列表，剔除缺响应的悬空 assistant tool_call（HIL 有意悬空通过 id 集合跳过）。
+- `safety.dangling.DanglingToolCallDetector`：操作 Spring AI `Message` 列表，剔除缺响应的悬空 assistant tool_call。
 - `safety.lifecycle.SessionLifecycleCleaner`：实现 `AgentLifecycleListener`，终结事件分发注册的清理任务。
 - `springai.BaseToolCallbackDecorator`：装饰器基类，委托 `ToolCallback`，供 Spill/Governed 复用。
 - `springai.SpanContextHolder`：ThreadLocal 透传 TURN spanId + sessionId 给 `ObservingChatModel`/工具装饰器。
@@ -83,8 +83,8 @@ demo      端到端示例
 - `ObservabilityToolCallback`：包 `ToolCallback`（继承 `BaseToolCallbackDecorator`），每次调用建 `TOOL_CALL`（ToolCallSpan）+ `TOOL_INPUT`/`TOOL_OUTPUT` 事件，失败记 `ERROR`，span 属性带 `toolName`。
 - 父 span 与 sessionId 经 `SpanContextHolder`（ThreadLocal）透传，仅适用同步调用路径。
 
-### 4.5 spill / capability / hil
-暂缓（见 TODO）。spill 设计为 MinIO/S3 溢出保护；capability 为 Skill + MCP 热插拔；hil 为人工审批复用悬空修复。
+### 4.5 spill / capability
+暂缓（见 TODO）。spill 设计为 MinIO/S3 溢出保护；capability 为 Skill + MCP 热插拔。
 
 ### 4.6 starter（编排器 + 自动装配）
 - `runtime.AgentRuntime`：编排器入口，`builder(ChatModel)` 流式构建 `ChatClient`（挂 `MessageChatMemoryAdvisor`），`call(sessionId,userText)`/`close(sessionId)`，管 SESSION/TURN span + 生命周期事件 + duration。
@@ -134,14 +134,13 @@ AgentRuntime.call
 
 ## 6. 数据模型
 
-8 张 `agent_*` 表（public schema）+ `agent_runtime_obs.span`/`event_record`（独立 schema）。Flyway 迁移：V1 init schema、V2 span attributes、V3 event payload jsonb→text。命名统一 `snake_case` + `agent_` 前缀。
+5 张 `agent_*` 表（public schema：session / message / summary_snapshot / tool_call / spill_record）+ `agent_runtime_obs.span`/`event_record`（独立 schema）。Flyway 迁移：V1 init schema、V2 span attributes、V3 event payload jsonb→text。命名统一 `snake_case` + `agent_` 前缀。
 
 ## 7. 路线图
 
 - M1 记忆与基础可观测 ✅（最小可用已跑通）
 - M2 Spill + 能力供给（暂缓）
 - M3 LLM 摘要 + 并行调用 + 悬空修复（并行调用已完成：A7 ParallelToolCallingManager 已接入并验证）
-- M4 人工审批（暂缓）
 - M5 可观测平台化（UI + OTLP，暂缓）
 
 详见 `docs/TODO.md`。

@@ -26,7 +26,7 @@ public enum RiskLevelEnum {
     /** 中风险 */
     MEDIUM("MEDIUM", "medium"),
 
-    /** 高风险，需人工审批 */
+    /** 高风险 */
     HIGH("HIGH", "high");
 
     private final String code;

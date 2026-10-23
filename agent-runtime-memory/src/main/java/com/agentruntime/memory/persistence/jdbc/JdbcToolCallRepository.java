@@ -51,7 +51,7 @@ public class JdbcToolCallRepository implements ToolCallRepository {
                     + "tc.idempotent, tc.risk_level, tc.retry_count, tc.failure_category, tc.created_at "
                     + "FROM agent_tool_call tc "
                     + "JOIN agent_message m ON m.message_id = tc.message_id "
-                    + "WHERE m.session_id = ? AND tc.status IN ('PENDING', 'AWAITING_APPROVAL')";
+                    + "WHERE m.session_id = ? AND tc.status = 'PENDING'";
 
     private static final String SQL_UPDATE_STATUS =
             "UPDATE agent_tool_call SET status = ? WHERE tool_call_id = ?";

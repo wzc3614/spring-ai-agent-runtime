@@ -1,5 +1,6 @@
 # Agent Runtime 待办与状态
 
+> 最后更新：2026-10-23（移除 HIL 人工审批模块及其契约、表和待办）
 > 最后更新：2026-10-23（基础版 LLM 摘要记忆落地：异步压缩 + Compaction 角色 + ChatHistorySummarizer SPI；放弃九段式）
 > 最后更新：2026-10-17（端到端全通：工具调用+观测 span 树完整；修 4 个 bug）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并 demo 验证并行生效）
@@ -7,8 +8,8 @@
 
 ## 已完成（基线）
 
-- [x] 项目骨架：parent pom + 8 模块 + demo + Flyway V1 schema + LICENSE(Apache 2.0)
-- [x] `api` 模块：domain(9) / enums(9) / repository(8) / spi(5) / lifecycle(3) / memory 配置(3) / spill 配置(1) / exception(2)
+- [x] 项目骨架：parent pom + 7 模块 + demo + Flyway V1 schema + LICENSE(Apache 2.0)
+- [x] `api` 模块：domain(8) / enums(8) / repository(7) / spi(4) / lifecycle(3) / memory 配置(3) / spill 配置(1) / exception(2)
 - [x] `memory` 模块：4 个 JDBC repo、TransactionPortImpl、LocalTokenEstimator、BudgetCalculator、MicroCompactor、异步写入路径（WriteTask/Queue/Worker/SeqProvider/Policy）
 - [x] `starter`：AgentRuntime + Builder + Factory、CompactingChatMemory + Builder + Factory、MessageConverter、AgentRuntimeAutoConfiguration
 - [x] `demo`：BusinessTool / DemoAgentService / DemoController / Application / application.yml
@@ -55,14 +56,6 @@
 - [ ] E3 差量刷新 + 引用计数延迟关闭
 - [ ] E4 `DynamicToolCallbackProvider`
 - [ ] E5 内置原子工具
-
-### F. HIL 人工审批（M4，未建）
-- [ ] F1 HIL Advisor
-- [ ] F2 风险等级 Policy Hook
-- [ ] F3 Approval REST API
-- [ ] F4 `JdbcApprovalRepository`
-- [ ] F5 `ApprovalNotifier` SPI
-- [ ] F6 复用悬空修复做审批恢复
 
 ### G. 工具失败/重试（已设计未建）
 - [x] G1 `GovernedToolCallback`/`RetryToolCallback` — 已落地为 `GovernedToolCallback`（重试+分类装饰器），接进 `AgentRuntimeBuilder` 包装链（raw -> Governed -> Observability）

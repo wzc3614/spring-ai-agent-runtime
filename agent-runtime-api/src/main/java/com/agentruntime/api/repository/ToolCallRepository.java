@@ -51,8 +51,7 @@ public interface ToolCallRepository {
     List<ToolCall> findByMessage(String messageId);
 
     /**
-     * 查询会话内处于未终结状态（PENDING / AWAITING_APPROVAL）的工具调用，
-     * 用于悬空调用修复与审批恢复。
+     * 查询会话内处于未终结状态（PENDING）的工具调用，用于悬空调用修复。
      *
      * @param sessionId 会话 ID
      * @return 工具调用列表

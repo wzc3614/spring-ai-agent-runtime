@@ -18,7 +18,7 @@ package com.agentruntime.core.tool;
 import com.agentruntime.api.enums.RiskLevelEnum;
 
 /**
- * 工具治理元数据：风险等级 + 幂等性。供 Governed 装饰器（重试/HIL）使用，
+ * 工具治理元数据：风险等级 + 幂等性。供 Governed 装饰器（重试）使用，
  * 与 api.memory.ToolCompactionRule（压缩策略）职责不同、各自独立。
  */
 public class ToolMeta {

@@ -216,7 +216,7 @@ raw -> GovernedToolCallback -> ObservabilityToolCallback（最外层）
 
 ### 5.6 落库（可选，本期最小做）
 
-`ToolCall` 已有 `retryCount / failureCategory`。若接入 `ToolCallRepository` 写入：在 `GovernedToolCallback` 重试循环里累加 `retryCount`，终态时写 `failureCategory`。本期可先**只在内存/日志记录**，落库待 HIL/重试状态机一起做（避免与 memory 子系统的异步写入路径耦合）。文档中标注为"后续接入点"。
+`ToolCall` 已有 `retryCount / failureCategory`。若接入 `ToolCallRepository` 写入：在 `GovernedToolCallback` 重试循环里累加 `retryCount`，终态时写 `failureCategory`。本期可先**只在内存/日志记录**，落库待重试状态写入与 memory 异步写入路径一起接。文档中标注为"后续接入点"。
 
 ## 6. 改动清单（review 用，未动手）
 
@@ -249,7 +249,7 @@ raw -> GovernedToolCallback -> ObservabilityToolCallback（最外层）
 2. **默认不重试**：`default-max-attempts=1` 保证升级零行为变更，重试需显式声明幂等 + attempts，安全优先。
 3. **失败转错误结果而非抛出**：与 Spring AI `DefaultToolCallingManager` 的"processor 兜底"思路一致，但更进一步把超时/未捕获异常也兜住，避免单工具炸整轮。代价是模型可能收到错误 JSON，需在 prompt 中约定模型如何解读。
 4. **虚拟线程中断依赖下游响应中断**：纯 CPU 死循环不响应中断时超时无法真正停线程；这是虚拟线程 + 中断模型的固有局限，可接受（业务工具多为 IO）。
-5. **落库延后**：`retryCount/failureCategory` 本期不写库，待 HIL 状态机统一接，避免与 memory 异步写入耦合。
+5. **落库延后**：`retryCount/failureCategory` 本期不写库，避免与 memory 异步写入耦合。
 
 ## 9. 验证计划
 

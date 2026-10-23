@@ -49,7 +49,7 @@ CREATE TABLE agent_summary_snapshot (
 
 -- -----------------------------------------------------------------------------
 -- Tool call (attached to the assistant message that requested it)
---   status: PENDING / SUCCESS / FAILED / SPILLED / AWAITING_APPROVAL / AMBIGUOUS
+--   status: PENDING / SUCCESS / FAILED / SPILLED / AMBIGUOUS
 --   failure_category: TRANSIENT / TERMINAL / AMBIGUOUS
 -- -----------------------------------------------------------------------------
 CREATE TABLE agent_tool_call (
@@ -79,21 +79,6 @@ CREATE TABLE agent_spill_record (
     expires_at          TIMESTAMP,
     created_at          TIMESTAMP    NOT NULL DEFAULT now()
 );
-
--- -----------------------------------------------------------------------------
--- Approval record (Human-in-the-Loop)
---   status: PENDING / APPROVED / REJECTED / EXPIRED
--- -----------------------------------------------------------------------------
-CREATE TABLE agent_approval_record (
-    approval_id    VARCHAR(64)  PRIMARY KEY,
-    tool_call_id   VARCHAR(64)  NOT NULL REFERENCES agent_tool_call (tool_call_id),
-    status         VARCHAR(32)  NOT NULL,
-    decided_by     VARCHAR(128),
-    reason         TEXT,
-    decided_at     TIMESTAMP,
-    created_at     TIMESTAMP    NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_agent_approval_pending ON agent_approval_record (status) WHERE status = 'PENDING';
 
 -- =============================================================================
 -- Observability: independent schema, so it can be migrated wholesale to
