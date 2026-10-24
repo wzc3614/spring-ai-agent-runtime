@@ -11,7 +11,7 @@
 - 技术栈：Java 21 + Spring Boot 3.4 + Spring AI 1.0.0 GA
 - 协议：Apache License 2.0
 - groupId：`com.agentruntime`
-- 基础设施全开源可插拔（PostgreSQL/MySQL、Redis、MinIO、Nacos/Apollo、OpenTelemetry）
+- 基础设施全开源可插拔（PostgreSQL/MySQL、Redis、Nacos/Apollo、OpenTelemetry）
 
 ## 2. 四条设计哲学
 
@@ -25,26 +25,24 @@
 ```
 api        契契约层（domain/enums/repository/spi/lifecycle/memory/spill/exception，零 Spring AI）
 core       Spring AI 感知共享内核（parallel/safety/springai 基类/tool 元数据，不依赖子系统）
-memory     记忆子系统（持久化 + 异步写入 + 微压缩 + 动态预算）
-spill      溢出保护（MinIO/S3，暂缓）
+memory     记忆子系统（持久化 + 异步写入 + 工具结果压缩 + 动态预算）
 observability 认知可观测（Span/Event 树 + 日志/JDBC Sink）
-capability 能力供给（Skill + MCP 热插拔，暂缓）
+capability 能力供给（Skill + MCP 热插拔，MCP 未做）
 starter    自动装配 + AgentRuntime 编排器
 demo      端到端示例
 ```
 
-依赖方向（无环）：`api ← core ← {memory, spill, observability, capability}`；`starter → core + 各子系统`；`demo → starter`。`AgentRuntime` 编排器放在 starter（不是 core），避免 core 既是"底座"又是"编排器"的循环依赖。
+依赖方向（无环）：`api ← core ← {memory, observability, capability}`；`starter → core + 各子系统`；`demo → starter`。`AgentRuntime` 编排器放在 starter（不是 core），避免 core 既是"底座"又是"编排器"的循环依赖。
 
 ## 4. 各模块设计
 
 ### 4.1 api（契约层）
-- `domain`：8 个实体 POJO（`AgentSession`/`AgentMessage`/`SummarySnapshot`/`SummarySections`/`ToolCall`/`SpillRecord`/`Span`/`EventRecord`），无参构造 + setter，JSON 字段统一 `String`，时间 `Instant`。
-- `enums`：8 个枚举（`SessionStatusEnum`/`MessageRoleEnum`/`ToolCallStatusEnum`/`RiskLevelEnum`/`FailureCategoryEnum`/`SpanTypeEnum`/`EventTypeEnum`/`CompactionModeEnum`），`code`+`desc`+`of(code)`。注意 `MessageRoleEnum` 用小写 code（`system/user/assistant/tool`）以对齐 Spring AI `MessageType.getValue()`。
-- `repository`：7 个数据访问端口（`SessionRepository` 含乐观锁、`MessageRepository`、`SummarySnapshotRepository`、`ToolCallRepository`、`SpillRecordRepository`、`SpanRepository`、`EventRepository`）。
-- `spi`：4 个能力端口（`SpillStorage`、`TokenEstimator`、`ToolFailureClassifier`、`TransactionPort`）。
+- `domain`：实体 POJO（`AgentSession`/`AgentMessage`/`SummarySnapshot`/`SummarySections`/`ToolCall`/`Span`/`EventRecord`），无参构造 + setter，JSON 字段统一 `String`，时间 `Instant`。工具原文在 `AgentMessage.payload`。
+- `enums`：状态 / 角色 / 风险 / 失败 / span / event / 压缩策略枚举。
+- `repository`：数据访问端口（`SessionRepository` 含乐观锁、`MessageRepository`、`SummarySnapshotRepository`、`ToolCallRepository`、`SpanRepository`、`EventRepository`）。
+- `spi`：`TokenEstimator`、`ToolFailureClassifier`、`TransactionPort`、`ToolResultCompactor`。
 - `lifecycle`：`AgentLifecycleEvent`/`SessionInfo`/`AgentLifecycleTypeEnum`（START/ENDED/CANCELLED/TIMED_OUT）/`AgentLifecycleListener`（含 `onFinished` 静态工厂）。
-- `memory`：`CompactConfig`（`ofModel`）/`ToolCompactionRule`（`clearable`）/`ToolCompactionPolicyRegistry`（`withDefaults`）/`SessionSeqProvider`/`MessageWritePolicy`。
-- `spill`：`SpillConfig`。
+- `memory`：`CompactConfig`、`ToolCompactionRule`（`query` / `retain` / `summarize` / `custom`）、`ToolCompactionPolicyRegistry`（默认查询类）、`SessionSeqProvider`、`MessageWritePolicy`。
 - `exception`：`AgentRuntimeException`/`OptimisticLockException`。
 
 ### 4.2 core（共享内核）
@@ -52,7 +50,7 @@ demo      端到端示例
 - `concurrency.parallel.ParallelToolExecutor`：虚拟线程 + Semaphore 限并发，结果按入参顺序对齐。
 - `safety.dangling.DanglingToolCallDetector`：操作 Spring AI `Message` 列表，剔除缺响应的悬空 assistant tool_call。
 - `safety.lifecycle.SessionLifecycleCleaner`：实现 `AgentLifecycleListener`，终结事件分发注册的清理任务。
-- `springai.BaseToolCallbackDecorator`：装饰器基类，委托 `ToolCallback`，供 Spill/Governed 复用。
+- `springai.BaseToolCallbackDecorator`：装饰器基类，委托 `ToolCallback`，供 Governed 复用。
 - `springai.SpanContextHolder`：ThreadLocal 透传 TURN spanId + sessionId 给 `ObservingChatModel`/工具装饰器。
 - `tool.ToolObjectResolver`：`@Tool` bean → `ToolCallback[]`（薄封装 `ToolCallbacks.from`）。
 - `tool.ToolMeta`/`ToolMetaRegistry`/`DefaultToolMetaRegistry`：风险等级 + 幂等性元数据（默认保守：LOW + 非幂等）。
@@ -66,7 +64,7 @@ demo      端到端示例
   - 第一级：`CompactingChatMemory.add()` 把每条消息编码为 `StoredMessage` JSON 信封，经 `RedisSessionSeqProvider`（Redis INCR，DB MAX 初始化）分配 seq，组装 `WriteTask`（`taskId=sha256(kind|sessionID|turnID|messageSeq)` 幂等），经 `MessageWritePolicy.shouldWrite` 判定后入 `MemoryWriteQueue`（Redis FIFO）。
   - 第二级：`MemoryWriteWorker`（`@Scheduled`）扫描待写 session，加 Redis 分布式锁（TTL+Lua 释放），排空队列，`TransactionPort` 内批量 INSERT，失败重投，超限进 DLQ。
 - 读取（`chat.CompactingChatMemory.get()`）：DB 历史 + Redis 队列 peek 合并（A1，解决 read-your-writes），按预算保留最近消息（`BudgetCalculator` + `LocalTokenEstimator`），解码为 Spring AI `Message`。
-- 压缩（`compaction`）：`MicroCompactor`（纯内存，完结轮次工具结果→证据指针）、`BudgetCalculator`/`BudgetResult`。M1 超预算时保留最近 N 条 + warn（LLM 摘要 M3）。
+- 压缩（`compaction`）：`ToolResultRenderer` 按工具策略生成上下文视图（查询过期 / 操作保留 / 搜索摘要），原文在 `agent_message.payload`。会话摘要仍由 `SummaryCompactor` 异步触发。
 - `chat.MessageConverter`/`StoredMessage`：Spring AI `Message` ↔ JSON 信封（含 `toolCalls`/`toolResponses`）跨轮回放。
 - `chat.CompactingChatMemoryFactory`/`Builder`：工厂 bean（方案 A）持有基础设施，用户只设 `chatModel`/`config`/`policyRegistry`。
 
@@ -83,8 +81,8 @@ demo      端到端示例
 - `ObservabilityToolCallback`：包 `ToolCallback`（继承 `BaseToolCallbackDecorator`），每次调用建 `TOOL_CALL`（ToolCallSpan）+ `TOOL_INPUT`/`TOOL_OUTPUT` 事件，失败记 `ERROR`，span 属性带 `toolName`。
 - 父 span 与 sessionId 经 `SpanContextHolder`（ThreadLocal）透传，仅适用同步调用路径。
 
-### 4.5 spill / capability
-暂缓（见 TODO）。spill 设计为 MinIO/S3 溢出保护；capability 为 Skill + MCP 热插拔。
+### 4.5 工具结果压缩（并入 memory）
+工具原文存在 `agent_message.payload`（JSONB），不再使用对象存储。读路径按工具策略生成上下文视图：查询类过期后删除原文并留下可重新调用的短句，操作类完整保留并在会话摘要之后回捞，搜索类在当前轮之后换成确定性摘要。未注册工具默认按查询类过期。自定义策略实现 `ToolResultCompactor`。
 
 ### 4.6 starter（编排器 + 自动装配）
 - `runtime.AgentRuntime`：编排器入口，`builder(ChatModel)` 流式构建 `ChatClient`（挂 `MessageChatMemoryAdvisor`），`call(sessionId,userText)`/`close(sessionId)`，管 SESSION/TURN span + 生命周期事件 + duration。
@@ -134,12 +132,12 @@ AgentRuntime.call
 
 ## 6. 数据模型
 
-5 张 `agent_*` 表（public schema：session / message / summary_snapshot / tool_call / spill_record）+ `agent_runtime_obs.span`/`event_record`（独立 schema）。Flyway 迁移：V1 init schema、V2 span attributes、V3 event payload jsonb→text。命名统一 `snake_case` + `agent_` 前缀。
+业务表在 public schema（session / message / summary_snapshot / tool_call，外加 skill）。工具原文在 `agent_message.payload`。`agent_spill_record` 由 V7 删除。观测表在 `agent_runtime_obs`。命名统一 `snake_case` + `agent_` 前缀。
 
 ## 7. 路线图
 
 - M1 记忆与基础可观测 ✅（最小可用已跑通）
-- M2 Spill + 能力供给（暂缓）
+- M2 工具结果压缩（已并入 memory）+ 能力供给中的 MCP（未做）
 - M3 LLM 摘要 + 并行调用 + 悬空修复（并行调用已完成：A7 ParallelToolCallingManager 已接入并验证）
 - M5 可观测平台化（UI + OTLP，暂缓）
 

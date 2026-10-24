@@ -18,7 +18,7 @@
     <name>Spring AI Agent Runtime</name>
     <description>
         A Harness layer on top of Spring AI that keeps a single agent running stably in production:
-        progressive memory compaction, spill guard, cognitive observability, capability hot-plug,
+        progressive memory compaction, cognitive observability, capability hot-plug,
         and parallel tool coordination.
     </description>
 
@@ -33,7 +33,6 @@
         <module>agent-runtime-api</module>
         <module>agent-runtime-core</module>
         <module>agent-runtime-memory</module>
-        <module>agent-runtime-spill</module>
         <module>agent-runtime-observability</module>
         <module>agent-runtime-capability</module>
         <module>agent-runtime-spring-boot-starter</module>
@@ -65,11 +64,6 @@
             <dependency>
                 <groupId>com.agentruntime</groupId>
                 <artifactId>agent-runtime-memory</artifactId>
-                <version>${agentruntime.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.agentruntime</groupId>
-                <artifactId>agent-runtime-spill</artifactId>
                 <version>${agentruntime.version}</version>
             </dependency>
             <dependency>

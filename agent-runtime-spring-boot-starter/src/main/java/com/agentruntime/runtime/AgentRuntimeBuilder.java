@@ -16,7 +16,6 @@
 package com.agentruntime.runtime;
 
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
-import com.agentruntime.api.spill.SpillConfig;
 import com.agentruntime.capability.skill.trace.SkillToolTraceCallback;
 import com.agentruntime.core.tool.ToolObjectResolver;
 import com.agentruntime.runtime.hook.TurnHook;
@@ -35,7 +34,7 @@ import java.util.List;
 
 /**
  * AgentRuntime 流式 builder。基础设施由 {@link AgentRuntimeFactory} 注入，
- * 用户设置 agentName / agentVersion / defaultSystem / defaultOptions / tools / memory / spill / listener / turnHooks。
+ * 用户设置 agentName / agentVersion / defaultSystem / defaultOptions / tools / memory / listener / turnHooks。
  */
 public class AgentRuntimeBuilder {
 
@@ -49,7 +48,6 @@ public class AgentRuntimeBuilder {
     private Object[] tools;
     private CompactingChatMemory memory;
     private List<TurnHook> turnHooks = List.of();
-    private SpillConfig spillConfig;
     private AgentLifecycleListener listener;
 
     public AgentRuntimeBuilder(AgentRuntimeFactory factory, ChatModel chatModel) {
@@ -84,11 +82,6 @@ public class AgentRuntimeBuilder {
 
     public AgentRuntimeBuilder memory(CompactingChatMemory memory) {
         this.memory = memory;
-        return this;
-    }
-
-    public AgentRuntimeBuilder spill(SpillConfig spillConfig) {
-        this.spillConfig = spillConfig;
         return this;
     }
 
@@ -149,7 +142,7 @@ public class AgentRuntimeBuilder {
             builder.defaultAdvisors(MessageChatMemoryAdvisor.builder(memory).build());
         }
         ChatClient chatClient = builder.build();
-        return new AgentRuntime(chatClient, agentName, agentVersion, memory, spillConfig, listener,
+        return new AgentRuntime(chatClient, agentName, agentVersion, memory, listener,
                 factory.getSessionRepository(), factory.getRecorder(), resolvedTools,
                 defaultSystem, factory.getTokenEstimator(), factory.getSkillRuntime(),
                 turnHooks, factory.getTurnExecutor(), factory.getObjectMapper());

@@ -16,6 +16,7 @@
 package com.agentruntime.memory.history;
 
 import com.agentruntime.api.domain.AgentMessage;
+import com.agentruntime.api.enums.ToolCompactionStrategyEnum;
 import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.WriteTask;
@@ -54,6 +55,61 @@ public final class SessionHistory {
                 ? repository.findBySession(sessionId, boundary)
                 : repository.findBySession(sessionId);
         return merge(persisted, queue.peekAll(sessionId), boundary);
+    }
+
+    /**
+     * 读路径装载：摘要边界之后的原文，加上边界内仍需完整保留的 RETAIN 消息。
+     *
+     * @param repository        消息仓储
+     * @param queue             写队列
+     * @param sessionId         会话 ID
+     * @param summarizedUpToSeq 已摘要覆盖的最大 seq，不含
+     * @return 按 seq 升序的消息
+     */
+    public static List<AgentMessage> loadForPrompt(MessageRepository repository, MemoryWriteQueue queue,
+                                                    String sessionId, long summarizedUpToSeq) {
+        List<AgentMessage> tail = load(repository, queue, sessionId, summarizedUpToSeq);
+        long boundary = Math.max(summarizedUpToSeq, 0L);
+        if (boundary <= 0L) {
+            return tail;
+        }
+        List<AgentMessage> pinned = repository.findRetainedUpTo(sessionId, boundary);
+        List<WriteTask> queuedPinned = retainedInQueue(queue.peekAll(sessionId), boundary);
+        List<AgentMessage> retained = merge(pinned, queuedPinned, 0L);
+        return overlay(retained, tail);
+    }
+
+    private static List<WriteTask> retainedInQueue(List<WriteTask> queued, long boundary) {
+        List<WriteTask> retained = new ArrayList<>();
+        if (CollectionUtils.isEmpty(queued)) {
+            return retained;
+        }
+        for (WriteTask task : queued) {
+            if (task.getSeq() <= boundary
+                    && ToolCompactionStrategyEnum.RETAIN.getCode().equals(task.getCompactionClass())) {
+                retained.add(task);
+            }
+        }
+        return retained;
+    }
+
+    /** overlay 覆盖同 seq 的底稿，结果按 seq 升序 */
+    private static List<AgentMessage> overlay(List<AgentMessage> base, List<AgentMessage> overlay) {
+        Map<Long, AgentMessage> bySeq = new LinkedHashMap<>();
+        putAll(bySeq, base);
+        putAll(bySeq, overlay);
+        List<AgentMessage> merged = new ArrayList<>(bySeq.values());
+        merged.sort(Comparator.comparingLong(AgentMessage::getSeq));
+        return merged;
+    }
+
+    private static void putAll(Map<Long, AgentMessage> bySeq, List<AgentMessage> messages) {
+        if (CollectionUtils.isEmpty(messages)) {
+            return;
+        }
+        for (AgentMessage message : messages) {
+            bySeq.put(message.getSeq(), message);
+        }
     }
 
     /**

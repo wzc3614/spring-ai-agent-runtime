@@ -20,7 +20,8 @@ import com.agentruntime.api.enums.MessageRoleEnum;
 import java.time.Instant;
 
 /**
- * 消息实体，对应 agent_message 表。只追加、不删除；compacted=true 表示已被微压缩替换为占位符。
+ * 消息实体，对应 agent_message 表。只追加、不删除。
+ * tool 消息的 payload 保存原文；content 信封里的 responseData 是注入模型的视图。
  */
 public class AgentMessage {
 
@@ -44,6 +45,18 @@ public class AgentMessage {
 
     /** 微压缩后的证据指针 */
     private String evidenceId;
+
+    /**
+     * 工具原文，JSON 对象，key 为工具调用 id。
+     * 只在 tool 消息上有值。查询类过期后对应条目的 data 置空。
+     */
+    private String payload;
+
+    /**
+     * 整条消息的压缩分类，取消息内优先级最高的工具策略。
+     * RETAIN 会在会话摘要边界之后被回捞。
+     */
+    private String compactionClass;
 
     /** 创建时间 */
     private Instant createdAt;
@@ -102,6 +115,22 @@ public class AgentMessage {
 
     public void setEvidenceId(String evidenceId) {
         this.evidenceId = evidenceId;
+    }
+
+    public String getPayload() {
+        return payload;
+    }
+
+    public void setPayload(String payload) {
+        this.payload = payload;
+    }
+
+    public String getCompactionClass() {
+        return compactionClass;
+    }
+
+    public void setCompactionClass(String compactionClass) {
+        this.compactionClass = compactionClass;
     }
 
     public Instant getCreatedAt() {

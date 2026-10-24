@@ -20,6 +20,7 @@ import com.agentruntime.api.observability.ObservabilitySink;
 import com.agentruntime.api.memory.MessageWritePolicy;
 import com.agentruntime.api.memory.SessionSeqProvider;
 import com.agentruntime.api.memory.ToolCompactionPolicyRegistry;
+import com.agentruntime.api.spi.ToolResultCompactor;
 import com.agentruntime.api.repository.EventRepository;
 import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.api.repository.SessionRepository;
@@ -40,6 +41,8 @@ import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.LocalTokenEstimator;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
 import com.agentruntime.memory.compaction.SummaryExecutor;
+import com.agentruntime.memory.compaction.ToolPayloadCleaner;
+import com.agentruntime.memory.compaction.ToolResultRenderer;
 import com.agentruntime.memory.persistence.jdbc.JdbcMessageRepository;
 import com.agentruntime.memory.persistence.jdbc.JdbcSessionRepository;
 import com.agentruntime.memory.persistence.jdbc.JdbcSummarySnapshotRepository;
@@ -146,9 +149,23 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ToolResultRenderer toolResultRenderer(ToolCompactionPolicyRegistry registry, ObjectMapper objectMapper,
+                                                  ObjectProvider<ToolResultCompactor> compactors) {
+        return new ToolResultRenderer(registry, objectMapper, compactors.orderedStream().toList());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ToolPayloadCleaner toolPayloadCleaner(MessageRepository messageRepository, ToolResultRenderer renderer) {
+        return new ToolPayloadCleaner(messageRepository, renderer);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public MemoryWriteWorker memoryWriteWorker(MemoryWriteQueue queue, MessageRepository messageRepository,
-                                                TransactionPort transactionPort, SessionSeqProvider sessionSeqProvider) {
-        return new MemoryWriteWorker(queue, messageRepository, transactionPort, sessionSeqProvider);
+                                                TransactionPort transactionPort, SessionSeqProvider sessionSeqProvider,
+                                                ToolPayloadCleaner payloadCleaner) {
+        return new MemoryWriteWorker(queue, messageRepository, transactionPort, sessionSeqProvider, payloadCleaner);
     }
 
     @Bean
@@ -169,10 +186,11 @@ public class AgentRuntimeAutoConfiguration {
                                                                      BudgetCalculator budgetCalculator,
                                                                      SummaryExecutor summaryExecutor,
                                                                      StringRedisTemplate redisTemplate,
-                                                                     ObservabilityRecorder recorder) {
+                                                                     ObservabilityRecorder recorder,
+                                                                     ObjectProvider<ToolResultCompactor> compactors) {
         return new CompactingChatMemoryFactory(writePolicy, seqProvider, writeQueue, messageRepository,
                 tokenEstimator, objectMapper, summarySnapshotRepository, budgetCalculator,
-                summaryExecutor, redisTemplate, recorder);
+                summaryExecutor, redisTemplate, recorder, compactors.orderedStream().toList());
     }
 
     @Bean

@@ -30,11 +30,6 @@
         </dependency>
         <dependency>
             <groupId>com.agentruntime</groupId>
-            <artifactId>agent-runtime-spill</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>com.agentruntime</groupId>
             <artifactId>agent-runtime-observability</artifactId>
         </dependency>
         <dependency>

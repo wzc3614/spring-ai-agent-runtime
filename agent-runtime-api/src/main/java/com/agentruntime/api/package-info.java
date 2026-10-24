@@ -25,14 +25,13 @@
  * <p>Subpackages:
  * <ul>
  *   <li>{@code domain} &mdash; AgentSession, AgentMessage, SummarySnapshot, SummaryContent,
- *       ToolCall, SpillRecord, Span, EventRecord</li>
+ *       ToolCall, Span, EventRecord</li>
  *   <li>{@code enums} &mdash; status / role / risk / failure / span / event / compaction enums</li>
  *   <li>{@code repository} &mdash; data-access ports (xxRepository) backed by the agent_* tables</li>
- *   <li>{@code spi} &mdash; capability extension ports: SpillStorage, TokenEstimator,
- *       ToolFailureClassifier, TransactionPort</li>
+ *   <li>{@code spi} &mdash; capability extension ports: TokenEstimator, ToolFailureClassifier,
+ *       TransactionPort, ToolResultCompactor</li>
  *   <li>{@code lifecycle} &mdash; AgentLifecycleEvent, AgentLifecycleTypeEnum, AgentLifecycleListener</li>
  *   <li>{@code memory} &mdash; CompactConfig, ToolCompactionRule, ToolCompactionPolicyRegistry</li>
- *   <li>{@code spill} &mdash; SpillConfig</li>
  *   <li>{@code exception} &mdash; AgentRuntimeException, OptimisticLockException</li>
  * </ul>
  */

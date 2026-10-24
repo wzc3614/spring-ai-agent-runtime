@@ -173,7 +173,7 @@ class AgentRuntimeTurnHookTest {
         SessionRepository sessions = mock(SessionRepository.class);
         when(sessions.findById(any())).thenReturn(Optional.empty());
         when(sessions.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        return new AgentRuntime(chatClient, "DemoAgent", "1.0.0", null, null, null, sessions, recorder,
+        return new AgentRuntime(chatClient, "DemoAgent", "1.0.0", null, null, sessions, recorder,
                 List.of(), null, tokenEstimator, skillRuntime, List.of(hook), executor, objectMapper);
     }
 

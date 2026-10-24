@@ -24,6 +24,7 @@ import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.api.repository.SummarySnapshotRepository;
 import com.agentruntime.api.spi.TokenEstimator;
+import com.agentruntime.api.spi.ToolResultCompactor;
 import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.compaction.CompactionFallbackHandler;
 import com.agentruntime.memory.compaction.IncrementalRollupSummarizer;
@@ -31,11 +32,14 @@ import com.agentruntime.memory.compaction.StructuredExtractor;
 import com.agentruntime.memory.compaction.SummaryCompactor;
 import com.agentruntime.memory.compaction.SummaryContentValidator;
 import com.agentruntime.memory.compaction.SummaryExecutor;
+import com.agentruntime.memory.compaction.ToolResultRenderer;
 import com.agentruntime.memory.compaction.TurnSelector;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.data.redis.core.StringRedisTemplate;
+
+import java.util.List;
 
 /**
  * CompactingChatMemory 工厂（Spring bean，持有全部基础设施）。
@@ -57,6 +61,7 @@ public class CompactingChatMemoryFactory {
     private final SummaryExecutor summaryExecutor;
     private final StringRedisTemplate redis;
     private final ObservabilityRecorder recorder;
+    private final List<ToolResultCompactor> toolResultCompactors;
 
     public CompactingChatMemoryFactory(MessageWritePolicy writePolicy, SessionSeqProvider seqProvider,
                                         MemoryWriteQueue writeQueue, MessageRepository messageRepository,
@@ -65,7 +70,8 @@ public class CompactingChatMemoryFactory {
                                         BudgetCalculator budgetCalculator,
                                         SummaryExecutor summaryExecutor,
                                         StringRedisTemplate redis,
-                                        ObservabilityRecorder recorder) {
+                                        ObservabilityRecorder recorder,
+                                        List<ToolResultCompactor> toolResultCompactors) {
         this.writePolicy = writePolicy;
         this.seqProvider = seqProvider;
         this.writeQueue = writeQueue;
@@ -77,6 +83,7 @@ public class CompactingChatMemoryFactory {
         this.summaryExecutor = summaryExecutor;
         this.redis = redis;
         this.recorder = recorder;
+        this.toolResultCompactors = toolResultCompactors == null ? List.of() : toolResultCompactors;
     }
 
     /**
@@ -110,11 +117,12 @@ public class CompactingChatMemoryFactory {
         SummaryContentValidator validator = new SummaryContentValidator();
         // TurnSelector 用 per-call config 构建，保证 builder.config(...) 覆盖的 topK/keywords 生效
         TurnSelector turnSelector = new TurnSelector(config);
+        ToolResultRenderer renderer = new ToolResultRenderer(policyRegistry, objectMapper, toolResultCompactors);
         SummaryCompactor compactor = new SummaryCompactor(summaryRepository, messageRepository, writeQueue,
                 budgetCalculator, tokenEstimator, config, objectMapper, redis, turnSelector,
-                fallbackHandler, validator, recorder);
+                fallbackHandler, validator, recorder, renderer);
         return new CompactingChatMemory(chatModel, config, policyRegistry, writePolicy, seqProvider,
                 writeQueue, messageRepository, tokenEstimator, converter,
-                summaryRepository, compactor, budgetCalculator, summaryExecutor, objectMapper);
+                summaryRepository, compactor, budgetCalculator, summaryExecutor, objectMapper, renderer);
     }
 }

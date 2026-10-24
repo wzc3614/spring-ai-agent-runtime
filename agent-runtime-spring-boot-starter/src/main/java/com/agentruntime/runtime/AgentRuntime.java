@@ -35,7 +35,6 @@ import com.agentruntime.api.lifecycle.AgentLifecycleTypeEnum;
 import com.agentruntime.api.lifecycle.SessionInfo;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
-import com.agentruntime.api.spill.SpillConfig;
 import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
@@ -77,7 +76,6 @@ public class AgentRuntime {
     private final String agentName;
     private final String agentVersion;
     private final CompactingChatMemory memory;
-    private final SpillConfig spillConfig;
     private final AgentLifecycleListener listener;
     private final SessionRepository sessionRepository;
     private final ObservabilityRecorder recorder;
@@ -115,16 +113,15 @@ public class AgentRuntime {
     private final Map<String, String> sessionSpanIds = new ConcurrentHashMap<>();
 
     public AgentRuntime(ChatClient chatClient, String agentName, String agentVersion,
-                        CompactingChatMemory memory, SpillConfig spillConfig,
-                        AgentLifecycleListener listener, SessionRepository sessionRepository,
-                        ObservabilityRecorder recorder, List<ToolCallback> tools,
-                        String defaultSystem, TokenEstimator tokenEstimator, SkillRuntime skillRuntime,
-                        List<TurnHook> turnHooks, Executor turnExecutor, ObjectMapper objectMapper) {
+                        CompactingChatMemory memory, AgentLifecycleListener listener,
+                        SessionRepository sessionRepository, ObservabilityRecorder recorder,
+                        List<ToolCallback> tools, String defaultSystem, TokenEstimator tokenEstimator,
+                        SkillRuntime skillRuntime, List<TurnHook> turnHooks, Executor turnExecutor,
+                        ObjectMapper objectMapper) {
         this.chatClient = chatClient;
         this.agentName = agentName;
         this.agentVersion = agentVersion;
         this.memory = memory;
-        this.spillConfig = spillConfig;
         this.listener = listener;
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
@@ -310,10 +307,6 @@ public class AgentRuntime {
 
     public CompactingChatMemory getMemory() {
         return memory;
-    }
-
-    public SpillConfig getSpillConfig() {
-        return spillConfig;
     }
 
     /**

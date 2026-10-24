@@ -24,6 +24,7 @@ import com.agentruntime.api.enums.CompactionFailureKindEnum;
 import com.agentruntime.api.enums.EventTypeEnum;
 import com.agentruntime.api.enums.SpanTypeEnum;
 import com.agentruntime.api.enums.SummaryStatusEnum;
+import com.agentruntime.api.enums.ToolCompactionStrategyEnum;
 import com.agentruntime.api.memory.CompactConfig;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.MessageRepository;
@@ -78,13 +79,14 @@ public class SummaryCompactor {
     private final CompactionFallbackHandler fallbackHandler;
     private final SummaryContentValidator validator;
     private final ObservabilityRecorder recorder;
+    private final ToolResultRenderer toolResultRenderer;
 
     public SummaryCompactor(SummarySnapshotRepository summaryRepository, MessageRepository messageRepository,
                             MemoryWriteQueue writeQueue, BudgetCalculator budgetCalculator,
                             TokenEstimator tokenEstimator, CompactConfig config, ObjectMapper objectMapper,
                             StringRedisTemplate redis, TurnSelector turnSelector,
                             CompactionFallbackHandler fallbackHandler, SummaryContentValidator validator,
-                            ObservabilityRecorder recorder) {
+                            ObservabilityRecorder recorder, ToolResultRenderer toolResultRenderer) {
         this.summaryRepository = summaryRepository;
         this.messageRepository = messageRepository;
         this.writeQueue = writeQueue;
@@ -97,6 +99,7 @@ public class SummaryCompactor {
         this.fallbackHandler = fallbackHandler;
         this.validator = validator;
         this.recorder = recorder;
+        this.toolResultRenderer = toolResultRenderer;
     }
 
     /**
@@ -146,7 +149,8 @@ public class SummaryCompactor {
         SummarySnapshot latestUsable = summaryRepository.findLatestUsable(sessionId).orElse(null);
         long oldBoundary = latestUsable != null ? latestUsable.getSummarizedUpToSeq() : 0L;
         SummaryContent existing = extractStructured(latestUsable);
-        List<AgentMessage> tail = SessionHistory.load(messageRepository, writeQueue, sessionId, oldBoundary);
+        List<AgentMessage> tail = toolResultRenderer.render(
+                SessionHistory.load(messageRepository, writeQueue, sessionId, oldBoundary), false);
         if (tail.size() < config.getMinMessagesToCompact()) {
             return;
         }
@@ -229,10 +233,14 @@ public class SummaryCompactor {
         int recentBoundaryIndex = Math.max(0, size - keepRecent);
         List<AgentMessage> toCompact = new ArrayList<>();
         for (int i = 0; i < recentBoundaryIndex; i++) {
-            AgentMessage m = merged.get(i);
-            if (m.getSeq() > oldBoundary) {
-                toCompact.add(m);
+            AgentMessage message = merged.get(i);
+            if (message.getSeq() <= oldBoundary) {
+                continue;
             }
+            if (ToolCompactionStrategyEnum.RETAIN.getCode().equals(message.getCompactionClass())) {
+                continue;
+            }
+            toCompact.add(message);
         }
         return toCompact;
     }

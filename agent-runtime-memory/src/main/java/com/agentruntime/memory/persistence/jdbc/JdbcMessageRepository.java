@@ -16,6 +16,8 @@
 package com.agentruntime.memory.persistence.jdbc;
 
 import com.agentruntime.api.domain.AgentMessage;
+import com.agentruntime.api.enums.MessageRoleEnum;
+import com.agentruntime.api.enums.ToolCompactionStrategyEnum;
 import com.agentruntime.api.repository.MessageRepository;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,29 +31,49 @@ import java.util.Optional;
  */
 public class JdbcMessageRepository implements MessageRepository {
 
+    private static final String JSON_NULL = "null";
+
+    private static final String MESSAGE_COLUMNS =
+            "message_id, session_id, seq, role, content, compacted, evidence_id, payload, compaction_class, created_at";
+
     private static final String SQL_INSERT =
-            "INSERT INTO agent_message (message_id, session_id, seq, role, content, compacted, evidence_id, created_at) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO agent_message (message_id, session_id, seq, role, content, compacted, evidence_id, "
+                    + "payload, compaction_class, created_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?) "
                     + "ON CONFLICT (session_id, seq) DO NOTHING";
 
     private static final String SQL_FIND_BY_SESSION =
-            "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
-                    + "FROM agent_message WHERE session_id = ? ORDER BY seq ASC";
+            "SELECT " + MESSAGE_COLUMNS + " FROM agent_message WHERE session_id = ? ORDER BY seq ASC";
 
     private static final String SQL_FIND_BY_SESSION_FROM =
-            "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
-                    + "FROM agent_message WHERE session_id = ? AND seq > ? ORDER BY seq ASC";
+            "SELECT " + MESSAGE_COLUMNS
+                    + " FROM agent_message WHERE session_id = ? AND seq > ? ORDER BY seq ASC";
 
     private static final String SQL_FIND_LATEST =
-            "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
-                    + "FROM agent_message WHERE session_id = ? ORDER BY seq DESC LIMIT 1";
+            "SELECT " + MESSAGE_COLUMNS
+                    + " FROM agent_message WHERE session_id = ? ORDER BY seq DESC LIMIT 1";
 
     private static final String SQL_FIND_BY_SESSION_AND_SEQ =
-            "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
-                    + "FROM agent_message WHERE session_id = ? AND seq = ?";
+            "SELECT " + MESSAGE_COLUMNS + " FROM agent_message WHERE session_id = ? AND seq = ?";
 
     private static final String SQL_MARK_COMPACTED =
             "UPDATE agent_message SET compacted = true, evidence_id = ? WHERE message_id = ?";
+
+    private static final String SQL_UPDATE_TOOL_VIEW =
+            "UPDATE agent_message SET content = ?, payload = ?::jsonb, compacted = ? WHERE message_id = ?";
+
+    private static final String SQL_FIND_RETAINED_UP_TO =
+            "SELECT " + MESSAGE_COLUMNS
+                    + " FROM agent_message WHERE session_id = ? AND seq <= ? AND compaction_class = ? "
+                    + "ORDER BY seq ASC";
+
+    private static final String SQL_FIND_UNCOMPACTED_TOOLS =
+            "SELECT " + MESSAGE_COLUMNS
+                    + " FROM agent_message WHERE session_id = ? AND role = ? AND compacted = false "
+                    + "ORDER BY seq ASC";
+
+    private static final String SQL_FIND_USER_SEQS =
+            "SELECT seq FROM agent_message WHERE session_id = ? AND role = ? ORDER BY seq ASC";
 
     private static final String SQL_DELETE_BY_SESSION =
             "DELETE FROM agent_message WHERE session_id = ?";
@@ -72,6 +94,8 @@ public class JdbcMessageRepository implements MessageRepository {
                 message.getContent(),
                 message.isCompacted(),
                 message.getEvidenceId(),
+                jsonb(message.getPayload()),
+                message.getCompactionClass(),
                 JdbcUtils.toTimestamp(message.getCreatedAt()));
     }
 
@@ -102,6 +126,34 @@ public class JdbcMessageRepository implements MessageRepository {
     @Override
     public int markCompacted(String messageId, String evidenceId) {
         return jdbcTemplate.update(SQL_MARK_COMPACTED, evidenceId, messageId);
+    }
+
+    @Override
+    public int updateToolView(String messageId, String content, String payload, boolean compacted) {
+        return jdbcTemplate.update(SQL_UPDATE_TOOL_VIEW, content, jsonb(payload), compacted, messageId);
+    }
+
+    /** JSON null literal，避免 SQL NULL 无法匹配 ?::jsonb */
+    private static String jsonb(String payload) {
+        return payload == null ? JSON_NULL : payload;
+    }
+
+    @Override
+    public List<AgentMessage> findRetainedUpTo(String sessionId, long upToSeq) {
+        return jdbcTemplate.query(SQL_FIND_RETAINED_UP_TO, AgentRowMappers.MESSAGE,
+                sessionId, upToSeq, ToolCompactionStrategyEnum.RETAIN.getCode());
+    }
+
+    @Override
+    public List<AgentMessage> findUncompactedToolMessages(String sessionId) {
+        return jdbcTemplate.query(SQL_FIND_UNCOMPACTED_TOOLS, AgentRowMappers.MESSAGE,
+                sessionId, MessageRoleEnum.TOOL.getCode());
+    }
+
+    @Override
+    public List<Long> findUserSeqs(String sessionId) {
+        return jdbcTemplate.query(SQL_FIND_USER_SEQS,
+                (rs, rowNum) -> rs.getLong("seq"), sessionId, MessageRoleEnum.USER.getCode());
     }
 
     @Override

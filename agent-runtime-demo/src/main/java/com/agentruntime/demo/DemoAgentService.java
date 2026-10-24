@@ -17,6 +17,7 @@ package com.agentruntime.demo;
 
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.memory.CompactConfig;
+import com.agentruntime.api.memory.ToolCompactionConstants;
 import com.agentruntime.api.memory.ToolCompactionPolicyRegistry;
 import com.agentruntime.api.memory.ToolCompactionRule;
 import com.agentruntime.core.tool.BackoffPolicy;
@@ -50,14 +51,16 @@ public class DemoAgentService {
                             AgentRuntimeFactory agentFactory,
                             BusinessTool businessTool,
                             BadCaseTool badCaseTool,
-                            ToolMetaRegistry toolMetaRegistry) {
+                            ToolMetaRegistry toolMetaRegistry,
+                            ToolCompactionPolicyRegistry policyRegistry) {
         // 注册 badcase 工具治理元数据：幂等性 + 重试次数 + 单调用超时
         registerBadCaseMetas(toolMetaRegistry);
 
-        // 工具压缩策略：查询类工具完结即清
-        ToolCompactionPolicyRegistry policyRegistry = ToolCompactionPolicyRegistry.withDefaults();
-        policyRegistry.register(ToolCompactionRule.clearable("query_user_info"));
-        policyRegistry.register(ToolCompactionRule.clearable("query_recent_orders"));
+        // 查询类：下一条用户消息起不再携带原文。未注册工具同样按查询类过期。
+        policyRegistry.register(ToolCompactionRule.query("query_user_info",
+                ToolCompactionConstants.DEFAULT_QUERY_EXPIRE_TURNS));
+        policyRegistry.register(ToolCompactionRule.query("query_recent_orders",
+                ToolCompactionConstants.DEFAULT_QUERY_EXPIRE_TURNS));
 
         // 压缩配置（基础版：仅预算参数，压缩用模型即注入的 flashChatModel）
         CompactConfig config = CompactConfig.defaults();

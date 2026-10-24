@@ -78,6 +78,42 @@ public interface MessageRepository {
     int markCompacted(String messageId, String evidenceId);
 
     /**
+     * 回写工具消息的上下文视图和原文。查询类过期时 payload 中对应 data 已置空。
+     *
+     * @param messageId 消息 ID
+     * @param content   存储信封
+     * @param payload   工具原文 JSON，可为 null
+     * @param compacted 物理视图是否已经稳定，稳定后清理任务不再扫描
+     * @return 受影响行数
+     */
+    int updateToolView(String messageId, String content, String payload, boolean compacted);
+
+    /**
+     * 查询已被会话摘要覆盖、但仍需完整回捞的消息（compaction_class = RETAIN）。
+     *
+     * @param sessionId 会话 ID
+     * @param upToSeq   摘要边界（含）
+     * @return 按 seq 升序的消息
+     */
+    List<AgentMessage> findRetainedUpTo(String sessionId, long upToSeq);
+
+    /**
+     * 查询尚未完成物理清理的工具消息。
+     *
+     * @param sessionId 会话 ID
+     * @return 按 seq 升序的 tool 消息
+     */
+    List<AgentMessage> findUncompactedToolMessages(String sessionId);
+
+    /**
+     * 查询会话内用户消息的 seq，供工具结果计算过期轮次。
+     *
+     * @param sessionId 会话 ID
+     * @return 按 seq 升序
+     */
+    List<Long> findUserSeqs(String sessionId);
+
+    /**
      * 会话结束时批量清理其消息（记忆按 session 共享，clear 走此路径）。
      *
      * @param sessionId 会话 ID

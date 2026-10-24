@@ -48,6 +48,12 @@ public class WriteTask {
     /** 证据指针 */
     private String evidenceId;
 
+    /** 工具原文 JSON，key 为工具调用 id */
+    private String payload;
+
+    /** 整条消息的压缩分类 */
+    private String compactionClass;
+
     /** 创建时间（epoch millis） */
     private long createdAtEpochMillis;
 
@@ -124,6 +130,22 @@ public class WriteTask {
 
     public void setEvidenceId(String evidenceId) {
         this.evidenceId = evidenceId;
+    }
+
+    public String getPayload() {
+        return payload;
+    }
+
+    public void setPayload(String payload) {
+        this.payload = payload;
+    }
+
+    public String getCompactionClass() {
+        return compactionClass;
+    }
+
+    public void setCompactionClass(String compactionClass) {
+        this.compactionClass = compactionClass;
     }
 
     public long getCreatedAtEpochMillis() {

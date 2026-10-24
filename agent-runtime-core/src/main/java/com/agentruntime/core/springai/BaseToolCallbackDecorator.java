@@ -21,8 +21,8 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
 /**
- * ToolCallback 装饰器基类。委托底层 ToolCallback，子类可重写 call() 拦截结果（Spill）
- * 或前置校验（Governed）。供 SpillGuardToolCallback / GovernedToolCallback 复用。
+ * ToolCallback 装饰器基类。委托底层 ToolCallback，子类可重写 call() 做结果加工或前置校验。
+ * 供 GovernedToolCallback 复用。
  */
 public abstract class BaseToolCallbackDecorator implements ToolCallback {
 

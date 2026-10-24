@@ -57,6 +57,8 @@ public final class AgentRowMappers {
                 message.setContent(rs.getString("content"));
                 message.setCompacted(rs.getBoolean("compacted"));
                 message.setEvidenceId(rs.getString("evidence_id"));
+                message.setPayload(rs.getString("payload"));
+                message.setCompactionClass(rs.getString("compaction_class"));
                 message.setCreatedAt(JdbcUtils.toInstant(rs.getTimestamp("created_at")));
                 return message;
             };

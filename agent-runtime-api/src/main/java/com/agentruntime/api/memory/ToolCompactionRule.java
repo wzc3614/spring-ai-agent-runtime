@@ -15,31 +15,83 @@
  */
 package com.agentruntime.api.memory;
 
+import com.agentruntime.api.enums.ToolCompactionStrategyEnum;
+
 /**
- * 单个工具的结果微压缩策略。关键操作永不压缩，查询类按轮次过期清理。
+ * 单个工具的结果压缩策略。未注册的工具走默认规则：查询类，下一条用户消息起过期。
  */
 public class ToolCompactionRule {
 
     /** 工具名称 */
     private String toolName;
 
-    /** 是否永不压缩（关键操作置 true） */
-    private boolean neverCompact;
+    /** 策略 */
+    private ToolCompactionStrategyEnum strategy = ToolCompactionStrategyEnum.QUERY;
 
-    /** 完结多少轮次后清理（查询类，0 表示立即清理） */
-    private int expireAfterTurns;
+    /** 查询类：之后再出现多少条用户消息才清除原文 */
+    private int expireAfterTurns = ToolCompactionConstants.DEFAULT_QUERY_EXPIRE_TURNS;
+
+    /** 搜索类：注入上下文的摘要字符上限 */
+    private int summaryMaxChars = ToolCompactionConstants.DEFAULT_SUMMARY_MAX_CHARS;
+
+    /** 自定义策略编码，仅 CUSTOM 使用 */
+    private String compactorCode;
 
     /**
-     * 工厂方法：构建一个可清理的策略（neverCompact=false，完结即清）。
+     * 查询类。expireAfterTurns 为 1 时，下一条用户消息起不再携带原文。
      *
-     * @param toolName 工具名称
-     * @return 可清理策略
+     * @param toolName         工具名称
+     * @param expireAfterTurns 过期所需的后续用户消息数
+     * @return 规则
      */
-    public static ToolCompactionRule clearable(String toolName) {
+    public static ToolCompactionRule query(String toolName, int expireAfterTurns) {
         ToolCompactionRule rule = new ToolCompactionRule();
         rule.setToolName(toolName);
-        rule.setNeverCompact(false);
-        rule.setExpireAfterTurns(0);
+        rule.setStrategy(ToolCompactionStrategyEnum.QUERY);
+        rule.setExpireAfterTurns(expireAfterTurns);
+        return rule;
+    }
+
+    /**
+     * 操作类，原文完整保留。
+     *
+     * @param toolName 工具名称
+     * @return 规则
+     */
+    public static ToolCompactionRule retain(String toolName) {
+        ToolCompactionRule rule = new ToolCompactionRule();
+        rule.setToolName(toolName);
+        rule.setStrategy(ToolCompactionStrategyEnum.RETAIN);
+        return rule;
+    }
+
+    /**
+     * 搜索类。当前轮保留原文，之后换成不超过 summaryMaxChars 的确定性摘要。
+     *
+     * @param toolName        工具名称
+     * @param summaryMaxChars 摘要字符上限
+     * @return 规则
+     */
+    public static ToolCompactionRule summarize(String toolName, int summaryMaxChars) {
+        ToolCompactionRule rule = new ToolCompactionRule();
+        rule.setToolName(toolName);
+        rule.setStrategy(ToolCompactionStrategyEnum.SUMMARIZE);
+        rule.setSummaryMaxChars(summaryMaxChars);
+        return rule;
+    }
+
+    /**
+     * 自定义渲染器。code 对应 {@code ToolResultCompactor#code()}。
+     *
+     * @param toolName      工具名称
+     * @param compactorCode 渲染器编码
+     * @return 规则
+     */
+    public static ToolCompactionRule custom(String toolName, String compactorCode) {
+        ToolCompactionRule rule = new ToolCompactionRule();
+        rule.setToolName(toolName);
+        rule.setStrategy(ToolCompactionStrategyEnum.CUSTOM);
+        rule.setCompactorCode(compactorCode);
         return rule;
     }
 
@@ -51,12 +103,12 @@ public class ToolCompactionRule {
         this.toolName = toolName;
     }
 
-    public boolean isNeverCompact() {
-        return neverCompact;
+    public ToolCompactionStrategyEnum getStrategy() {
+        return strategy;
     }
 
-    public void setNeverCompact(boolean neverCompact) {
-        this.neverCompact = neverCompact;
+    public void setStrategy(ToolCompactionStrategyEnum strategy) {
+        this.strategy = strategy;
     }
 
     public int getExpireAfterTurns() {
@@ -65,5 +117,21 @@ public class ToolCompactionRule {
 
     public void setExpireAfterTurns(int expireAfterTurns) {
         this.expireAfterTurns = expireAfterTurns;
+    }
+
+    public int getSummaryMaxChars() {
+        return summaryMaxChars;
+    }
+
+    public void setSummaryMaxChars(int summaryMaxChars) {
+        this.summaryMaxChars = summaryMaxChars;
+    }
+
+    public String getCompactorCode() {
+        return compactorCode;
+    }
+
+    public void setCompactorCode(String compactorCode) {
+        this.compactorCode = compactorCode;
     }
 }

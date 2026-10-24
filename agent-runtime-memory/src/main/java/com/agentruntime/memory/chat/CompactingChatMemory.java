@@ -19,6 +19,7 @@ import com.agentruntime.api.domain.AgentMessage;
 import com.agentruntime.api.domain.SummaryContent;
 import com.agentruntime.api.domain.SummarySnapshot;
 import com.agentruntime.api.enums.SummaryStatusEnum;
+import com.agentruntime.api.enums.ToolCompactionStrategyEnum;
 import com.agentruntime.api.memory.CompactConfig;
 import com.agentruntime.api.memory.MessageWritePolicy;
 import com.agentruntime.api.memory.SessionSeqProvider;
@@ -31,6 +32,9 @@ import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.BudgetResult;
 import com.agentruntime.memory.compaction.SummaryCompactor;
 import com.agentruntime.memory.compaction.SummaryExecutor;
+import com.agentruntime.memory.compaction.ToolMessagePreparer;
+import com.agentruntime.memory.compaction.ToolPayloadCodec;
+import com.agentruntime.memory.compaction.ToolResultRenderer;
 import com.agentruntime.memory.history.SessionHistory;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.WriteTask;
@@ -56,6 +60,7 @@ import java.util.UUID;
  * 读路径：get() 合并 DB 历史 + Redis 队列未消费任务，若存在可用摘要快照则渲染为
  * {@link CompactionMessage} 注入并仅取摘要边界之后的历史；按预算保留最近消息后解码返回。
  * 当预算超阈值时，异步触发 {@link SummaryCompactor} 压缩（fire-and-forget，不阻塞主流程）。
+ * 注入模型前按工具策略替换工具结果视图：当前轮原文，之后查询类过期、搜索类摘要、操作类保留。
  */
 public class CompactingChatMemory implements ChatMemory {
 
@@ -75,6 +80,8 @@ public class CompactingChatMemory implements ChatMemory {
     private final BudgetCalculator budgetCalculator;
     private final SummaryExecutor summaryExecutor;
     private final ObjectMapper objectMapper;
+    private final ToolResultRenderer toolResultRenderer;
+    private final ToolMessagePreparer toolMessagePreparer;
 
     public CompactingChatMemory(ChatModel chatModel, CompactConfig config, ToolCompactionPolicyRegistry policyRegistry,
                                  MessageWritePolicy writePolicy, SessionSeqProvider seqProvider,
@@ -82,7 +89,7 @@ public class CompactingChatMemory implements ChatMemory {
                                  TokenEstimator tokenEstimator, MessageConverter messageConverter,
                                  SummarySnapshotRepository summaryRepository, SummaryCompactor summaryCompactor,
                                  BudgetCalculator budgetCalculator, SummaryExecutor summaryExecutor,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper, ToolResultRenderer toolResultRenderer) {
         this.chatModel = chatModel;
         this.config = config;
         this.policyRegistry = policyRegistry;
@@ -97,6 +104,9 @@ public class CompactingChatMemory implements ChatMemory {
         this.budgetCalculator = budgetCalculator;
         this.summaryExecutor = summaryExecutor;
         this.objectMapper = objectMapper;
+        this.toolResultRenderer = toolResultRenderer;
+        this.toolMessagePreparer = new ToolMessagePreparer(messageConverter, policyRegistry,
+                new ToolPayloadCodec(objectMapper));
     }
 
     @Override
@@ -112,8 +122,8 @@ public class CompactingChatMemory implements ChatMemory {
             String roleCode = message.getMessageType().getValue();
             long seq = seqProvider.nextSeq(sessionId);
             String messageId = UUID.randomUUID().toString();
-            WriteTask task = newTask(sessionId, turnId, messageId, seq, roleCode,
-                    messageConverter.encode(message));
+            WriteTask task = newTask(sessionId, turnId, messageId, seq, roleCode);
+            toolMessagePreparer.apply(message, task);
             if (!writePolicy.shouldWrite(sessionId, turnId, WriteTaskConverter.toMessage(task))) {
                 continue;
             }
@@ -129,12 +139,12 @@ public class CompactingChatMemory implements ChatMemory {
         SummaryContent content = extractStructured(snapshot);
         boolean hasSummary = isUsable(content);
         long boundary = hasSummary ? snapshot.getSummarizedUpToSeq() : 0L;
-        List<AgentMessage> historyMessages = SessionHistory.load(
-                messageRepository, writeQueue, sessionId, boundary);
+        List<AgentMessage> historyMessages = toolResultRenderer.render(
+                SessionHistory.loadForPrompt(messageRepository, writeQueue, sessionId, boundary), true);
 
         // 预算判定 + 异步触发压缩（fire-and-forget，不阻塞）
         int summaryTokens = hasSummary ? tokenEstimator.estimate(new CompactionMessage(content).getText()) : 0;
-        int historyTokens = tokenEstimator.estimateMessages(historyMessages);
+        int historyTokens = tokenEstimator.estimateMessages(summarizable(historyMessages));
         int fixedOverhead = MemoryBudgetContextHolder.fixedOverhead();
         BudgetResult budget = budgetCalculator.compute(config, fixedOverhead, summaryTokens, historyTokens);
         if (budget.isTriggerCompaction() && !summaryCompactor.isCompacting(sessionId)) {
@@ -159,6 +169,19 @@ public class CompactingChatMemory implements ChatMemory {
     public void clear(String conversationId) {
         // 记忆按 session 共享：传入的 conversationId 实为 sessionId
         writeQueue.discardSession(conversationId, () -> messageRepository.deleteBySession(conversationId));
+    }
+
+    /**
+     * 会话摘要只能消化非 RETAIN 消息。操作类原文单独回捞，不拿它们的体积反复触发摘要。
+     */
+    private List<AgentMessage> summarizable(List<AgentMessage> messages) {
+        List<AgentMessage> eligible = new ArrayList<>();
+        for (AgentMessage message : messages) {
+            if (!ToolCompactionStrategyEnum.RETAIN.getCode().equals(message.getCompactionClass())) {
+                eligible.add(message);
+            }
+        }
+        return eligible;
     }
 
     /**
@@ -219,8 +242,7 @@ public class CompactingChatMemory implements ChatMemory {
                 || (content.getSummary() != null && !content.getSummary().isBlank());
     }
 
-    private WriteTask newTask(String sessionId, String turnId, String messageId,
-                              long seq, String roleCode, String content) {
+    private WriteTask newTask(String sessionId, String turnId, String messageId, long seq, String roleCode) {
         WriteTask task = new WriteTask();
         task.setTaskId(WriteTaskIdGenerator.generate(roleCode, sessionId, turnId, seq));
         task.setSessionId(sessionId);
@@ -228,7 +250,6 @@ public class CompactingChatMemory implements ChatMemory {
         task.setMessageId(messageId);
         task.setSeq(seq);
         task.setRoleCode(roleCode);
-        task.setContent(content);
         task.setCompacted(false);
         task.setCreatedAtEpochMillis(Instant.now().toEpochMilli());
         return task;

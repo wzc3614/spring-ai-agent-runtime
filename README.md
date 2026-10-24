@@ -11,7 +11,7 @@
 
 - 技术栈：Java 21 + Spring Boot 3.4 + Spring AI 1.0.0 GA
 - 协议：Apache License 2.0
-- 基础设施全开源可插拔（PostgreSQL/MySQL、Redis、MinIO、Nacos/Apollo、OpenTelemetry）
+- 基础设施全开源可插拔（PostgreSQL/MySQL、Redis、Nacos/Apollo、OpenTelemetry）
 
 ## 核心设计
 
@@ -25,10 +25,9 @@
 ```
 api          契约层（domain/enums/repository/spi/lifecycle，零 Spring AI）
 core         Spring AI 感知共享内核（parallel/safety/tool 元数据，不依赖子系统）
-memory       记忆（持久化 + 异步写入 + 微压缩 + 动态预算）
+memory       记忆（持久化 + 异步写入 + 工具结果压缩 + 动态预算）
 observability 认知可观测（Span/Event 树 + 日志/JDBC Sink）
-spill        溢出保护（MinIO/S3，暂缓）
-capability   能力供给（Skill + MCP 热插拔，暂缓）
+capability   能力供给（Skill + MCP 热插拔，MCP 未做）
 starter      自动装配 + AgentRuntime 编排器
 demo         端到端示例
 ```

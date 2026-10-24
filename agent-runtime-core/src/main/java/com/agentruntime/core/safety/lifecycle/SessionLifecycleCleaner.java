@@ -24,8 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
- * 会话生命周期清理器。终结事件时按注册顺序执行各子系统的清理任务
- * （Spill 文件、内存缓存、临时工具连接等），框架替业务扛脏活。
+ * 会话生命周期清理器。终结事件时按注册顺序执行各子系统的清理任务，框架替业务扛脏活。
  */
 public class SessionLifecycleCleaner implements AgentLifecycleListener {
 

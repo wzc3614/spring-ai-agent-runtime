@@ -2,9 +2,9 @@
 
 > 版：0.3（草案，**本期暂缓实施** — 2026-10-18 确认）
 > 最后更新：2026-10-18
-> 关联文档：`docs/design.md`（项目定位与模块分层）、`docs/TODO.md`（section I 记录暂缓项）
+> 关联文档：`docs/design.md`（项目定位与模块分层）、`docs/TODO.md`（section J 记录已落地的两层 ID）
 
-> **状态说明**：本设计的 §3（两层 ID 模型）与 §8（兼容性）已落地实现并端到端验证通过（见 `docs/TODO.md` section J）。§4–§7 的编排原语层（`TurnScope` / `TurnBuilder` / ChatClient 注册表 / langchain4j 接入等）为进阶能力，**本期不做**，已记入 `docs/TODO.md` section I（I1–I9，均标 `[-]` 暂缓）。当前 `AgentRuntime.call/stream` 单轮入口满足近期需求；待出现多步编排 / 跨 provider 切换 / langchain4j 接入等明确需求再启动。§9 的 6 个待确认项随原语层一并暂缓。
+> **状态说明**：本设计的 §3（两层 ID 模型）与 §8（兼容性）已落地实现并端到端验证通过（见 `docs/TODO.md` section J）。§4–§7 的编排原语层不再列入待办。当前 `AgentRuntime.call/stream` 单轮入口满足近期需求。
 
 ## 1. 背景与目标
 
@@ -388,7 +388,7 @@ public class LangChain4jChatModelAdapter implements ChatModel {
 
 ## 9. 待 review 与待确认项（随原语层一并暂缓，本期不做）
 
-> 两层 ID 模型（uid → sessionId）与 `call(uid, sessionId, text)` 签名已确认并落地实现（见 §8）。以下 6 项均属尚未实现的编排原语层，**本期暂缓**（见 `docs/TODO.md` section I），待启动原语层时再逐项确认。
+> 两层 ID 模型（uid → sessionId）与 `call(uid, sessionId, text)` 签名已确认并落地实现（见 §8）。以下 6 项属于尚未实现的编排原语层，不再列入待办。
 
 1. **`TurnScope` 放 `core` 还是下沉接口到 `api`？** 倾向放 `core`（依赖 `SpanContextHolder`）。若希望 langchain4j 用户只依赖 `api` 就能用，需把 `TurnScope` 接口下沉到 `api`、实现留 `core`。请确认。
 2. **`instrumentTurn` 命名**：候选 `streamTurn` / `wrapTurn` / `instrumentTurn`，倾向 `instrumentTurn`。

@@ -19,6 +19,7 @@ import com.agentruntime.api.domain.AgentMessage;
 import com.agentruntime.api.memory.SessionSeqProvider;
 import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.api.spi.TransactionPort;
+import com.agentruntime.memory.compaction.ToolPayloadCleaner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,8 @@ public class MemoryWriteWorker {
 
     private final SessionSeqProvider seqProvider;
 
+    private final ToolPayloadCleaner payloadCleaner;
+
     /** 锁 TTL（毫秒），需大于单批最大写入耗时 */
     private long lockTtlMillis = WriteQueueConstants.DEFAULT_LOCK_TTL_MILLIS;
 
@@ -52,11 +55,13 @@ public class MemoryWriteWorker {
     private int maxRetries = 3;
 
     public MemoryWriteWorker(MemoryWriteQueue queue, MessageRepository messageRepository,
-                             TransactionPort transactionPort, SessionSeqProvider seqProvider) {
+                             TransactionPort transactionPort, SessionSeqProvider seqProvider,
+                             ToolPayloadCleaner payloadCleaner) {
         this.queue = queue;
         this.messageRepository = messageRepository;
         this.transactionPort = transactionPort;
         this.seqProvider = seqProvider;
+        this.payloadCleaner = payloadCleaner;
     }
 
     /**
@@ -88,7 +93,9 @@ public class MemoryWriteWorker {
             queue.releaseIfIdle(sessionId);
             return;
         }
-        writeOrRetry(sessionId, parsed);
+        if (writeOrRetry(sessionId, parsed)) {
+            cleanPayloads(sessionId);
+        }
     }
 
     private List<ParsedWrite> parse(String sessionId, List<String> raws) {
@@ -107,13 +114,30 @@ public class MemoryWriteWorker {
         return parsed;
     }
 
-    private void writeOrRetry(String sessionId, List<ParsedWrite> parsed) {
+    private boolean writeOrRetry(String sessionId, List<ParsedWrite> parsed) {
         try {
             transactionPort.executeInTransaction((Runnable) () -> appendAll(parsed));
             queue.ack(sessionId, rawsOf(parsed));
+            return true;
         } catch (Exception e) {
             log.error("batch write failed, will retry, sessionId={}, taskCount={}", sessionId, parsed.size(), e);
             settleFailure(sessionId, parsed);
+            return false;
+        }
+    }
+
+    /**
+     * 本批落库之后，在同一把写锁里把已过期的工具视图写回。
+     * 清理失败不影响已经确认的消息，下一轮写入会再试。
+     */
+    private void cleanPayloads(String sessionId) {
+        if (payloadCleaner == null) {
+            return;
+        }
+        try {
+            payloadCleaner.clean(sessionId);
+        } catch (RuntimeException e) {
+            log.error("tool payload clean failed, sessionId={}", sessionId, e);
         }
     }
 

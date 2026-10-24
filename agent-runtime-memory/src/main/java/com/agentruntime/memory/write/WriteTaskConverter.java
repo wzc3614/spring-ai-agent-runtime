@@ -41,6 +41,8 @@ public final class WriteTaskConverter {
         message.setContent(task.getContent());
         message.setCompacted(task.isCompacted());
         message.setEvidenceId(task.getEvidenceId());
+        message.setPayload(task.getPayload());
+        message.setCompactionClass(task.getCompactionClass());
         message.setCreatedAt(Instant.ofEpochMilli(task.getCreatedAtEpochMillis()));
         return message;
     }

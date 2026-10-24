@@ -16,12 +16,12 @@
 package com.agentruntime.api.memory;
 
 /**
- * 工具压缩策略注册表。按工具名查找策略，未注册时返回默认策略。
+ * 工具压缩策略注册表。按工具名查找策略，未注册时返回默认策略（查询类，过期后删除原文）。
  */
 public interface ToolCompactionPolicyRegistry {
 
     /**
-     * 返回一个默认注册表实例（默认策略：可压缩、完结即清）。
+     * 返回一个默认注册表实例（默认策略：查询类）。
      *
      * @return 默认注册表
      */

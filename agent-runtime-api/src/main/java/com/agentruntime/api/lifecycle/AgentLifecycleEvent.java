@@ -18,7 +18,7 @@ package com.agentruntime.api.lifecycle;
 import java.time.Instant;
 
 /**
- * 会话生命周期事件，用于触发 Spill 文件、内存缓存、临时工具连接的成套清理。
+ * 会话生命周期事件，用于在会话结束时协调各子系统清理。
  */
 public class AgentLifecycleEvent {
 

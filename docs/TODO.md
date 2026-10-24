@@ -1,20 +1,22 @@
 # Agent Runtime 待办与状态
 
+> 最后更新：2026-10-24（工具结果压缩并入 Memory：PostgreSQL JSONB，查询/操作/搜索三类策略）
 > 最后更新：2026-10-23（移除 HIL 人工审批模块及其契约、表和待办）
 > 最后更新：2026-10-23（基础版 LLM 摘要记忆落地：异步压缩 + Compaction 角色 + ChatHistorySummarizer SPI；放弃九段式）
 > 最后更新：2026-10-17（端到端全通：工具调用+观测 span 树完整；修 4 个 bug）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并 demo 验证并行生效）
-> 状态图例：`[ ]` 待办 / `[~]` 进行中 / `[x]` 完成 / `[-]` 暂缓
+> 状态图例：`[ ]` 待办 / `[~]` 进行中 / `[x]` 完成
 
 ## 已完成（基线）
 
 - [x] 项目骨架：parent pom + 7 模块 + demo + Flyway V1 schema + LICENSE(Apache 2.0)
-- [x] `api` 模块：domain(8) / enums(8) / repository(7) / spi(4) / lifecycle(3) / memory 配置(3) / spill 配置(1) / exception(2)
-- [x] `memory` 模块：4 个 JDBC repo、TransactionPortImpl、LocalTokenEstimator、BudgetCalculator、MicroCompactor、异步写入路径（WriteTask/Queue/Worker/SeqProvider/Policy）
+- [x] `api` 模块：domain / enums / repository / spi / lifecycle / memory 配置 / exception
+- [x] `memory` 模块：4 个 JDBC repo、TransactionPortImpl、LocalTokenEstimator、BudgetCalculator、工具结果压缩、异步写入路径（WriteTask/Queue/Worker/SeqProvider/Policy）
 - [x] `starter`：AgentRuntime + Builder + Factory、CompactingChatMemory + Builder + Factory、MessageConverter、AgentRuntimeAutoConfiguration
 - [x] `demo`：BusinessTool / DemoAgentService / DemoController / Application / application.yml
 - [x] 最小可用端到端编译 + 打包通过
 - [x] Spring AI 1.0.0-M6 → 1.0.0 GA 升级（7 处代码适配 + 3 个 pom 调整，已端到端验证：工具调用 / span 树 / 记忆落库全通）
+- [x] I6 `ObservingChatModel.stream()` 流式埋点（MODEL_CALL span 在流式下的开/关 + token 累积）
 
 ## 待建任务
 
@@ -24,22 +26,21 @@
 - [x] A3 `SessionLifecycleCleaner` — 会话结束协调各子系统清理
 - [x] A4 `BaseToolCallbackDecorator` + `ToolObjectResolver` — 装饰器基类 + `@Tool`→`ToolCallback`
 - [x] A5 工具元数据注册表（risk level + idempotent）+ `DefaultToolFailureClassifier`
-- [-] A6 `AgentSessionClient`/`CallResponse`/`PromptSpec`/`StreamResponse` + `ChatRequestOptions`（暂缓，编排器稳定后再抽）
 - [x] A7 接入 `ParallelToolCallingManager` — 自实现 `ToolCallingManager`，用 `ParallelToolExecutor` 并发执行一轮内多个 tool call，经 `ParallelToolCallingAutoConfiguration`（`@AutoConfigureBefore` Spring AI 的 `ToolCallingAutoConfiguration`）替换默认 `DefaultToolCallingManager`；观测装饰器链保持不变。附：`SpanContextHolder` 改 `InheritableThreadLocal` 以让虚拟线程继承 TURN spanId/sessionId（已 demo 验证：两个 TOOL_CALL span 起止时间完全重叠，并行生效）
 
 ### B. Memory 补齐
-- [ ] B1 把 `MicroCompactor` 接进 `CompactingChatMemory.get()`
+- [x] B1 工具结果读路径渲染：`ToolResultRenderer` 在 `CompactingChatMemory.get()` 和会话摘要前按策略替换视图（查询过期 / 搜索摘要 / 操作保留）。`MicroCompactor` 的 evidence 占位符已移除
 - [x] B2 基础版 LLM 摘要（放弃九段式）：历史超预算时异步调 `ChatModel` 压缩为一段摘要，存 `agent_summary_snapshot`（`sections` 通用 JSON + `summarized_up_to_seq` 边界，V4 迁移）；读侧注入 `CompactionMessage`（新 `MessageRoleEnum.COMPACTION`，借 `MessageType.SYSTEM`）；`ChatHistorySummarizer` SPI 供用户自定义；`MemoryBudgetContextHolder` 由 `AgentRuntime` 写入 fixedOverhead；per-session Redis 锁 + double-check，失败不重试
 - [ ] B3 异步写入路径实测验证（worker 排空 / Redis seq 初始化 / A1 读侧合并）
 - [ ] B4 `MessageWritePolicy` 用户扩展示例/文档
 - [ ] B5 摘要路径实测验证（长对话触发压缩 / 下一轮注入 summary / 并发不重复压缩 / 失败不重试）
 
-### C. Spill（M2，未建）
-- [ ] C1 `SpillGuardToolCallback`
-- [ ] C2 MinIO `SpillStorage` 实现
-- [ ] C3 `JdbcSpillRecordRepository`
-- [ ] C4 回读（字节区间 / JSONPath / 分页游标）
-- [ ] C5 把 Spill 接进 `AgentRuntime`
+### C. 工具结果原文（原 Spill，并入 Memory）
+- [x] C1 取消独立 spill 模块和 MinIO。原文写入 `agent_message.payload`（JSONB），`agent_spill_record` 由 V7 删除
+- [x] C2 内置三种策略：`QUERY` 过期后删原文并留短句、`RETAIN` 完整保留并在摘要边界后回捞、`SUMMARIZE` 确定性摘要。未注册工具默认 `QUERY`
+- [x] C3 自定义 `ToolResultCompactor`，按 code 挂到工具规则
+- [x] C4 物理清理走 `ToolPayloadCleaner`，与写入 worker 共用 session 写锁。当轮原文不压缩
+- [x] C5 单条原文超过 1MB 截断后仍视为工具调用成功
 
 ### D. Observability（M1 埋点 + M5 平台化，未建）
 - [x] D1 Span/Event 树构建器（`SpanTreeObservabilityRecorder` + `ObservabilityRecorder`/`ObservabilitySink` SPI）
@@ -68,33 +69,12 @@
 - [ ] H3 README / 使用文档 / 开源说明
 - [ ] H4 `@ConfigurationProperties` 调优配置
 - [ ] H5 MySQL 适配验证
-- [-] H6 Kafka/RocketMQ 异步（暂缓，Redis 队列先行）
-- [-] H7 长期记忆 pgvector/Milvus（M6 远期）
-
-### I. 编排原语层（进阶，暂缓 — 详见 `docs/orchestration-design.md` v0.3）
-> 决策（2026-10-18）：本期不做。当前 `AgentRuntime.call/stream` 单轮入口已端到端验证通过，满足近期需求。原语层为多步编排 / 跨 provider 切换 / langchain4j 接入等进阶场景预留，待有明确需求再启动。
-- [-] I1 `TurnScope` / `openTurn(uid, sessionId)` / `instrumentTurn(uid, sessionId, Flux)` — TURN 作用域原语（同步 + 流式对称）
-- [-] I2 `TurnBuilder` / `turn(uid, sessionId)` — 最省事流式入口（一行完成 openTurn + 记忆 advisor + 调用 + FINAL_REPLY + close）
-- [-] I3 `chatFor(sessionId)` — 返回已挂记忆 advisor、绑好 sessionId 的 `ChatClient`（省 advisor 样板）
-- [-] I4 ChatClient 注册表 + `chatClient(name)` — 多 provider 按名取，每个经 `ObservingChatModel` 装饰
-- [-] I5 `call/stream` 内部重构为原语的默认组合（行为不变，代码复用）
-- [x] I6 `ObservingChatModel.stream()` 补流式埋点（MODEL_CALL span 在流式下的开/关 + token 累积）
-- [-] I7 `ensureStarted` 公开 + 并发语义加固（`computeIfAbsent` 或锁，应对用户自调 `openTurn` 的竞态）
-- [-] I8 langchain4j 接入路 1（框架无关服务 + 手动埋点）/ 路 2（model 适配器）
-- [-] I9 `WorkflowTemplate` 脚手架（多 TURN + 记忆 + 事件，样板重复过多再抽）
 
 ### J. ID 模型修正（本轮已完成）
 - [x] J1 `AgentRuntime.call/stream` 签名补 `uid`（修复 `agent_session.user_id` 列存在但从不写入的 bug）
 - [x] J2 两层 ID 模型落地：`uid → sessionId`，记忆按 session 共享累积，seq 按 session 作用域（`UNIQUE(session_id, seq)`）
 - [x] J3 流式 context-propagation（`SpanContextHolder` 两参 + `Hooks.enableAutomaticContextPropagation()`），reactor 线程正确恢复 span 上下文
 - [x] J4 demo `/chat/stream` SSE 端点 + 端到端验证（流式 token / TOOL_CALL span 在 reactor 线程落库 / 并行工具起止重叠）
-
-## 待定决策
-
-- [ ] D-1 core 共享基类最终放 core（已倾向），还是单独 base 模块？
-- [ ] D-2 先实跑 demo 验证，还是继续堆功能？
-- [ ] D-3 MySQL 适配优先级（V1 是否就要双 DB）？
-- [ ] D-4 异步写入：Redis 队列够用，还是尽早接 MQ？
 
 ---
 
