@@ -33,26 +33,27 @@ import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.BudgetResult;
 import com.agentruntime.memory.chat.CompactionMessage;
+import com.agentruntime.memory.history.SessionHistory;
+import com.agentruntime.memory.redis.RedisCompareLock;
 import com.agentruntime.memory.write.MemoryWriteQueue;
-import com.agentruntime.memory.write.WriteTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 摘要压缩协调器：在异步线程内对一段对话历史做分层压缩，持久化为新版本 {@link SummarySnapshot}。
  * per-session Redis 锁保证分布式下同一会话同时只有一个压缩任务。
+ * 锁在压缩期间按 TTL 的三分之一续期，避免分批摘要超过 TTL 后第二个任务进入。
+ * 快照版本号在数据库里取 MAX+1，不使用读出来的 version+1。
  *
  * <p>流程：加锁 → double-check 预算 → 划定候选段 → {@link TurnSelector} 打分截断 →
  * 可选 {@link StructuredExtractor}（失败标 DEGRADED 继续）→ {@link ChatHistorySummarizer}
@@ -65,11 +66,6 @@ public class SummaryCompactor {
 
     private static final String LOCK_PREFIX = "agentruntime:summarylock:";
 
-    /** 释放锁的 Lua：仅当 value 等于 token 才 del */
-    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
-            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-            Long.class);
-
     private final SummarySnapshotRepository summaryRepository;
     private final MessageRepository messageRepository;
     private final MemoryWriteQueue writeQueue;
@@ -77,7 +73,7 @@ public class SummaryCompactor {
     private final TokenEstimator tokenEstimator;
     private final CompactConfig config;
     private final ObjectMapper objectMapper;
-    private final StringRedisTemplate redis;
+    private final RedisCompareLock redisLock;
     private final TurnSelector turnSelector;
     private final CompactionFallbackHandler fallbackHandler;
     private final SummaryContentValidator validator;
@@ -96,7 +92,7 @@ public class SummaryCompactor {
         this.tokenEstimator = tokenEstimator;
         this.config = config;
         this.objectMapper = objectMapper;
-        this.redis = redis;
+        this.redisLock = new RedisCompareLock(redis);
         this.turnSelector = turnSelector;
         this.fallbackHandler = fallbackHandler;
         this.validator = validator;
@@ -110,8 +106,7 @@ public class SummaryCompactor {
      * @return true 表示当前有压缩任务在跑
      */
     public boolean isCompacting(String sessionId) {
-        Boolean exists = redis.hasKey(lockKey(sessionId));
-        return Boolean.TRUE.equals(exists);
+        return redisLock.isHeld(lockKey(sessionId));
     }
 
     /**
@@ -122,48 +117,55 @@ public class SummaryCompactor {
     public void compact(String sessionId) {
         String lockKey = lockKey(sessionId);
         String token = UUID.randomUUID().toString();
-        Boolean acquired = redis.opsForValue().setIfAbsent(lockKey, token,
-                Duration.ofMillis(config.getSummaryLockTtlMillis()));
-        if (Boolean.FALSE.equals(acquired)) {
+        if (!redisLock.tryAcquire(lockKey, token, config.getSummaryLockTtlMillis())) {
             return;
         }
+        AtomicBoolean lockLost = new AtomicBoolean(false);
+        Thread renewer = startRenewal(lockKey, token, lockLost);
         Span span = startSpan(sessionId);
         try {
-            doCompact(sessionId, span);
+            doCompact(sessionId, span, lockLost);
         } catch (Exception e) {
+            if (lockLost.get()) {
+                log.error("summary lock lost, sessionId={}", sessionId, e);
+                return;
+            }
             log.error("summary compaction failed, sessionId={}", sessionId, e);
-            SummarySnapshot latestAny = summaryRepository.findLatest(sessionId).orElse(null);
             SummarySnapshot latestUsable = summaryRepository.findLatestUsable(sessionId).orElse(null);
             long oldBoundary = latestUsable == null ? 0L : latestUsable.getSummarizedUpToSeq();
-            persistFailed(sessionId, latestAny, oldBoundary, CompactionFailureKindEnum.OTHER,
-                    CompactionConstants.STAGE_SUMMARIZE, e.getMessage(), span);
+            persistFailed(sessionId, oldBoundary, CompactionFailureKindEnum.OTHER,
+                    CompactionConstants.STAGE_SUMMARIZE, e.getMessage(), span, lockLost);
         } finally {
+            renewer.interrupt();
             endSpan(span);
-            unlock(lockKey, token);
+            redisLock.release(lockKey, token);
         }
     }
 
-    private void doCompact(String sessionId, Span span) {
-        List<AgentMessage> merged = loadAndMerge(sessionId);
-        if (merged.size() < config.getMinMessagesToCompact()) {
-            return;
-        }
-        SummarySnapshot latestAny = summaryRepository.findLatest(sessionId).orElse(null);
+    private void doCompact(String sessionId, Span span, AtomicBoolean lockLost) {
         SummarySnapshot latestUsable = summaryRepository.findLatestUsable(sessionId).orElse(null);
         long oldBoundary = latestUsable != null ? latestUsable.getSummarizedUpToSeq() : 0L;
         SummaryContent existing = extractStructured(latestUsable);
+        List<AgentMessage> tail = SessionHistory.load(messageRepository, writeQueue, sessionId, oldBoundary);
+        if (tail.size() < config.getMinMessagesToCompact()) {
+            return;
+        }
 
-        // double-check：重新算预算，避免触发后又被别处压缩导致重复
+        // double-check 与读路径一致：只算摘要边界之后的原文
         int summaryTokens = estimateContentTokens(existing);
-        int historyTokens = tokenEstimator.estimateMessages(merged);
+        int historyTokens = tokenEstimator.estimateMessages(tail);
         int fixedOverhead = MemoryBudgetContextHolder.fixedOverhead();
         BudgetResult budget = budgetCalculator.compute(config, fixedOverhead, summaryTokens, historyTokens);
         if (!budget.isTriggerCompaction()) {
             return;
         }
 
-        List<AgentMessage> candidates = pickToCompact(merged, oldBoundary, config.getKeepRecentMessages());
+        List<AgentMessage> candidates = pickToCompact(tail, oldBoundary, config.getKeepRecentMessages());
         if (candidates.size() < config.getMinMessagesToCompact()) {
+            return;
+        }
+        if (lockLost.get()) {
+            log.error("summary lock lost before summarize, sessionId={}", sessionId);
             return;
         }
         List<AgentMessage> toCompact = turnSelector.select(candidates);
@@ -175,37 +177,50 @@ public class SummaryCompactor {
         try {
             summarizeResult = fallbackHandler.summarizeWithFallback(sessionId, existing, extraction, toCompact);
         } catch (CompactionException e) {
-            persistFailed(sessionId, latestAny, oldBoundary, e.getKind(), CompactionConstants.STAGE_SUMMARIZE,
-                    e.getMessage(), span);
+            persistFailed(sessionId, oldBoundary, e.getKind(), CompactionConstants.STAGE_SUMMARIZE,
+                    e.getMessage(), span, lockLost);
             return;
         }
         if (summarizeResult.isChunked() && status == SummaryStatusEnum.SUCCESS) {
             status = SummaryStatusEnum.PARTIAL;
         }
         if (!validator.isValid(summarizeResult.getContent())) {
-            persistFailed(sessionId, latestAny, oldBoundary, CompactionFailureKindEnum.VALIDATION,
-                    CompactionConstants.STAGE_VALIDATE, "structured summary validation failed", span);
+            persistFailed(sessionId, oldBoundary, CompactionFailureKindEnum.VALIDATION,
+                    CompactionConstants.STAGE_VALIDATE, "structured summary validation failed", span, lockLost);
             return;
         }
         long newBoundary = toCompact.get(toCompact.size() - 1).getSeq();
-        saveSnapshot(sessionId, latestAny, summarizeResult.getContent(), toCompact, newBoundary, status, null);
+        SummarySnapshot saved = saveSnapshot(sessionId, summarizeResult.getContent(), toCompact, newBoundary, status,
+                null, lockLost);
+        if (saved == null) {
+            return;
+        }
         log.info("summary compacted, sessionId={}, version={}, status={}, summarizedUpToSeq={}, compactedCount={}",
-                sessionId, latestAny == null ? 1 : latestAny.getVersion() + 1,
-                status.getCode(), newBoundary, toCompact.size());
+                sessionId, saved.getVersion(), status.getCode(), newBoundary, toCompact.size());
     }
 
-    /** 合并 DB 历史 + Redis 队列未消费任务，按 seq 升序去重 */
-    private List<AgentMessage> loadAndMerge(String sessionId) {
-        Map<Long, AgentMessage> bySeq = new LinkedHashMap<>();
-        for (AgentMessage m : messageRepository.findBySession(sessionId)) {
-            bySeq.put(m.getSeq(), m);
+    /**
+     * 按锁 TTL 的 {@link CompactionConstants#LOCK_RENEW_DIVISOR} 续期。续期失败表示锁已不属于本次任务。
+     */
+    private Thread startRenewal(String lockKey, String token, AtomicBoolean lockLost) {
+        long interval = Math.max(1L, config.getSummaryLockTtlMillis() / CompactionConstants.LOCK_RENEW_DIVISOR);
+        return Thread.ofVirtual().name("summary-lock-", 0).start(() -> renewLoop(lockKey, token, interval, lockLost));
+    }
+
+    private void renewLoop(String lockKey, String token, long intervalMillis, AtomicBoolean lockLost) {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                Thread.sleep(intervalMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (!redisLock.renew(lockKey, token, config.getSummaryLockTtlMillis())) {
+                lockLost.set(true);
+                log.error("summary lock renew failed, key={}", lockKey);
+                return;
+            }
         }
-        for (WriteTask task : writeQueue.peekAll(sessionId)) {
-            bySeq.putIfAbsent(task.getSeq(), toAgentMessage(task));
-        }
-        List<AgentMessage> merged = new ArrayList<>(bySeq.values());
-        merged.sort(Comparator.comparingLong(AgentMessage::getSeq));
-        return merged;
     }
 
     /** 产出候选段：seq > oldBoundary 且排除最近 keepRecent 条原文（再由 TurnSelector 打分截断） */
@@ -241,21 +256,24 @@ public class SummaryCompactor {
         return outcome;
     }
 
-    private void persistFailed(String sessionId, SummarySnapshot latestAny, long oldBoundary,
-                               CompactionFailureKindEnum kind, String stage, String errorMessage, Span span) {
-        saveFailedSnapshot(sessionId, latestAny, oldBoundary, errorMessage);
+    private void persistFailed(String sessionId, long oldBoundary, CompactionFailureKindEnum kind, String stage,
+                               String errorMessage, Span span, AtomicBoolean lockLost) {
+        if (lockLost.get()) {
+            log.error("summary lock lost, skip failure snapshot, sessionId={}", sessionId);
+            return;
+        }
+        saveFailedSnapshot(sessionId, oldBoundary, errorMessage);
         recordFailed(span, sessionId, stage, kind, errorMessage);
         log.error("summary compaction failed, sessionId={}, stage={}, kind={}",
                 sessionId, stage, kind.getCode());
     }
 
-    private void saveFailedSnapshot(String sessionId, SummarySnapshot latestAny, long oldBoundary, String errorMessage) {
+    private void saveFailedSnapshot(String sessionId, long oldBoundary, String errorMessage) {
         SummaryContent content = new SummaryContent();
         content.setSchemaVersion(2);
         SummarySnapshot snapshot = new SummarySnapshot();
         snapshot.setSummaryId(UUID.randomUUID().toString());
         snapshot.setSessionId(sessionId);
-        snapshot.setVersion(latestAny == null ? 1 : latestAny.getVersion() + 1);
         snapshot.setSections(writeJson(content));
         snapshot.setSummarizedUpToSeq(oldBoundary);
         snapshot.setStatus(SummaryStatusEnum.FAILED.getCode());
@@ -264,22 +282,29 @@ public class SummaryCompactor {
         summaryRepository.save(snapshot);
     }
 
-    private void saveSnapshot(String sessionId, SummarySnapshot latest, SummaryContent content,
-                              List<AgentMessage> toCompact, long newBoundary, SummaryStatusEnum status,
-                              String errorMessage) {
+    /**
+     * @return 已保存的快照。锁已经丢失时返回 null，不写入
+     */
+    private SummarySnapshot saveSnapshot(String sessionId, SummaryContent content, List<AgentMessage> toCompact,
+                                         long newBoundary, SummaryStatusEnum status, String errorMessage,
+                                         AtomicBoolean lockLost) {
+        if (lockLost.get()) {
+            log.error("summary lock lost, skip snapshot, sessionId={}", sessionId);
+            return null;
+        }
         content.setSchemaVersion(2);
         fillProvenance(content, toCompact, newBoundary, status);
 
         SummarySnapshot snapshot = new SummarySnapshot();
         snapshot.setSummaryId(UUID.randomUUID().toString());
         snapshot.setSessionId(sessionId);
-        snapshot.setVersion(latest == null ? 1 : latest.getVersion() + 1);
         snapshot.setSections(writeJson(content));
         snapshot.setSummarizedUpToSeq(newBoundary);
         snapshot.setStatus(status.getCode());
         snapshot.setErrorMessage(errorMessage);
         snapshot.setUpdatedAt(Instant.now());
         summaryRepository.save(snapshot);
+        return snapshot;
     }
 
     private void fillProvenance(SummaryContent content, List<AgentMessage> toCompact, long newBoundary,
@@ -368,25 +393,8 @@ public class SummaryCompactor {
         }
     }
 
-    private AgentMessage toAgentMessage(WriteTask task) {
-        AgentMessage message = new AgentMessage();
-        message.setMessageId(task.getMessageId());
-        message.setSessionId(task.getSessionId());
-        message.setSeq(task.getSeq());
-        message.setRole(com.agentruntime.api.enums.MessageRoleEnum.of(task.getRoleCode()));
-        message.setContent(task.getContent());
-        message.setCompacted(task.isCompacted());
-        message.setEvidenceId(task.getEvidenceId());
-        message.setCreatedAt(Instant.ofEpochMilli(task.getCreatedAtEpochMillis()));
-        return message;
-    }
-
     private String lockKey(String sessionId) {
         return LOCK_PREFIX + sessionId;
-    }
-
-    private void unlock(String lockKey, String token) {
-        redis.execute(UNLOCK_SCRIPT, java.util.Collections.singletonList(lockKey), token);
     }
 
     /** 第一层提取结果：提取物 + 是否已降级 */

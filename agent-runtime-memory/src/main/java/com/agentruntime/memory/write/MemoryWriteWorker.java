@@ -16,36 +16,26 @@
 package com.agentruntime.memory.write;
 
 import com.agentruntime.api.domain.AgentMessage;
-import com.agentruntime.api.enums.MessageRoleEnum;
+import com.agentruntime.api.memory.SessionSeqProvider;
 import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.api.spi.TransactionPort;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.util.CollectionUtils;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
+import java.util.Optional;
 
 /**
- * 写入 worker：周期性扫描待写 session，按 session 加 Redis 分布式锁后串行消费队列，
- * 批量落库（同一事务），失败重投，超限进 DLQ。保证同 session 顺序不丢不重。
+ * 写入 worker：按 session 加锁后认领处理中列表，整批落库成功才确认。
+ * 失败时任务仍留在处理中列表，重试次数写回原条目，不会在弹出之后丢失。
  */
 public class MemoryWriteWorker {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryWriteWorker.class);
-
-    private static final String LOCK_PREFIX = "agentruntime:writelock:";
-
-    /** 释放锁的 Lua：仅当 value 等于 token 才 del */
-    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
-            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-            Long.class);
 
     private final MemoryWriteQueue queue;
 
@@ -53,20 +43,20 @@ public class MemoryWriteWorker {
 
     private final TransactionPort transactionPort;
 
-    private final StringRedisTemplate redis;
+    private final SessionSeqProvider seqProvider;
 
     /** 锁 TTL（毫秒），需大于单批最大写入耗时 */
-    private long lockTtlMillis = 30000L;
+    private long lockTtlMillis = WriteQueueConstants.DEFAULT_LOCK_TTL_MILLIS;
 
-    /** 单任务最大重试次数 */
+    /** 单个任务允许写回处理中列表的最大 retryCount */
     private int maxRetries = 3;
 
     public MemoryWriteWorker(MemoryWriteQueue queue, MessageRepository messageRepository,
-                             TransactionPort transactionPort, StringRedisTemplate redis) {
+                             TransactionPort transactionPort, SessionSeqProvider seqProvider) {
         this.queue = queue;
         this.messageRepository = messageRepository;
         this.transactionPort = transactionPort;
-        this.redis = redis;
+        this.seqProvider = seqProvider;
     }
 
     /**
@@ -80,60 +70,109 @@ public class MemoryWriteWorker {
     }
 
     private void processSession(String sessionId) {
-        String lockKey = LOCK_PREFIX + sessionId;
-        String token = UUID.randomUUID().toString();
-        Boolean acquired = redis.opsForValue().setIfAbsent(lockKey, token, Duration.ofMillis(lockTtlMillis));
-        if (Boolean.FALSE.equals(acquired)) {
+        try {
+            queue.tryWithWriteLock(sessionId, lockTtlMillis, () -> processLocked(sessionId));
+        } catch (RuntimeException e) {
+            log.error("write session failed, sessionId={}", sessionId, e);
+        }
+    }
+
+    private void processLocked(String sessionId) {
+        List<String> raws = queue.claim(sessionId);
+        if (CollectionUtils.isEmpty(raws)) {
+            queue.releaseIfIdle(sessionId);
             return;
         }
-        try {
-            List<WriteTask> tasks = queue.drain(sessionId);
-            if (tasks.isEmpty()) {
-                queue.removeFromPending(sessionId);
-                return;
-            }
-            writeOrRetry(sessionId, tasks);
-        } finally {
-            unlock(lockKey, token);
+        List<ParsedWrite> parsed = parse(sessionId, raws);
+        if (parsed.isEmpty()) {
+            queue.releaseIfIdle(sessionId);
+            return;
         }
+        writeOrRetry(sessionId, parsed);
     }
 
-    private void writeOrRetry(String sessionId, List<WriteTask> tasks) {
+    private List<ParsedWrite> parse(String sessionId, List<String> raws) {
+        List<ParsedWrite> parsed = new ArrayList<>();
+        for (String raw : raws) {
+            WriteTask task = queue.tryDeserialize(raw);
+            if (task == null) {
+                queue.deadLetterRaw(sessionId, raw);
+                continue;
+            }
+            ParsedWrite item = new ParsedWrite();
+            item.setRaw(raw);
+            item.setTask(task);
+            parsed.add(item);
+        }
+        return parsed;
+    }
+
+    private void writeOrRetry(String sessionId, List<ParsedWrite> parsed) {
         try {
-            transactionPort.executeInTransaction((Runnable) () -> {
-                for (WriteTask task : tasks) {
-                    messageRepository.append(toMessage(task));
-                }
-            });
-            queue.removeFromPending(sessionId);
+            transactionPort.executeInTransaction((Runnable) () -> appendAll(parsed));
+            queue.ack(sessionId, rawsOf(parsed));
         } catch (Exception e) {
-            log.error("batch write failed, will retry, sessionId={}, taskCount={}", sessionId, tasks.size(), e);
-            for (WriteTask task : tasks) {
-                if (task.getRetryCount() < maxRetries) {
-                    task.setRetryCount(task.getRetryCount() + 1);
-                    queue.requeue(task);
-                } else {
-                    queue.pushToDlq(task);
-                }
-            }
+            log.error("batch write failed, will retry, sessionId={}, taskCount={}", sessionId, parsed.size(), e);
+            settleFailure(sessionId, parsed);
         }
     }
 
-    private AgentMessage toMessage(WriteTask task) {
-        AgentMessage message = new AgentMessage();
-        message.setMessageId(task.getMessageId());
-        message.setSessionId(task.getSessionId());
-        message.setSeq(task.getSeq());
-        message.setRole(MessageRoleEnum.of(task.getRoleCode()));
-        message.setContent(task.getContent());
-        message.setCompacted(task.isCompacted());
-        message.setEvidenceId(task.getEvidenceId());
-        message.setCreatedAt(Instant.ofEpochMilli(task.getCreatedAtEpochMillis()));
-        return message;
+    private void appendAll(List<ParsedWrite> parsed) {
+        for (ParsedWrite item : parsed) {
+            appendOne(item.getTask());
+        }
     }
 
-    private void unlock(String lockKey, String token) {
-        redis.execute(UNLOCK_SCRIPT, Collections.singletonList(lockKey), token);
+    /**
+     * 同一 seq 已存在且 messageId 相同，视为上次提交成功后的重试。
+     * messageId 不同则重新分配 seq，避免 ON CONFLICT 把另一条消息静默丢掉。
+     */
+    private void appendOne(WriteTask task) {
+        AgentMessage message = WriteTaskConverter.toMessage(task);
+        if (messageRepository.append(message) > 0) {
+            return;
+        }
+        if (sameMessage(task)) {
+            return;
+        }
+        long reallocated = seqProvider.nextSeq(task.getSessionId());
+        task.setSeq(reallocated);
+        message.setSeq(reallocated);
+        if (messageRepository.append(message) == 0) {
+            throw new IllegalStateException("message seq still conflicts after reallocation, sessionId="
+                    + task.getSessionId() + ", seq=" + reallocated);
+        }
+        log.warn("message seq conflict, reallocated, sessionId={}, messageId={}, seq={}",
+                task.getSessionId(), task.getMessageId(), reallocated);
+    }
+
+    private boolean sameMessage(WriteTask task) {
+        Optional<AgentMessage> existing = messageRepository.findBySessionAndSeq(task.getSessionId(), task.getSeq());
+        return existing.isPresent() && task.getMessageId().equals(existing.get().getMessageId());
+    }
+
+    private void settleFailure(String sessionId, List<ParsedWrite> parsed) {
+        List<String> deadLetters = new ArrayList<>();
+        List<String> retryable = new ArrayList<>();
+        for (ParsedWrite item : parsed) {
+            WriteTask task = item.getTask();
+            if (task.getRetryCount() < maxRetries) {
+                task.setRetryCount(task.getRetryCount() + 1);
+                retryable.add(queue.serialize(task));
+                continue;
+            }
+            deadLetters.add(queue.serialize(task));
+            log.warn("task moved to dlq, sessionId={}, taskId={}", task.getSessionId(), task.getTaskId());
+        }
+        queue.settle(sessionId, deadLetters, retryable);
+    }
+
+    private static List<String> rawsOf(List<ParsedWrite> parsed) {
+        List<String> raws = new ArrayList<>(parsed.size());
+        for (ParsedWrite item : parsed) {
+            raws.add(item.getRaw());
+        }
+        return raws;
     }
 
     public void setLockTtlMillis(long lockTtlMillis) {
@@ -142,5 +181,29 @@ public class MemoryWriteWorker {
 
     public void setMaxRetries(int maxRetries) {
         this.maxRetries = maxRetries;
+    }
+
+    /** 认领到的原始 JSON 和解析后的任务。确认删除时必须用原始 JSON，不能重新序列化。 */
+    private static final class ParsedWrite {
+
+        private String raw;
+
+        private WriteTask task;
+
+        public String getRaw() {
+            return raw;
+        }
+
+        public void setRaw(String raw) {
+            this.raw = raw;
+        }
+
+        public WriteTask getTask() {
+            return task;
+        }
+
+        public void setTask(WriteTask task) {
+            this.task = task;
+        }
     }
 }

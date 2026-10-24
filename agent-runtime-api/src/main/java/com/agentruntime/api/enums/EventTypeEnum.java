@@ -51,7 +51,10 @@ public enum EventTypeEnum {
     SKILL_DEACTIVATED("SKILL_DEACTIVATED", "skill deactivated"),
 
     /** Skill 加载超出 token 预算 */
-    SKILL_LOAD_BUDGET_EXCEEDED("SKILL_LOAD_BUDGET_EXCEEDED", "skill load budget exceeded");
+    SKILL_LOAD_BUDGET_EXCEEDED("SKILL_LOAD_BUDGET_EXCEEDED", "skill load budget exceeded"),
+
+    /** 轮次被钩子提前结束，未调用模型 */
+    TURN_INTERRUPTED("TURN_INTERRUPTED", "turn interrupted");
 
     private final String code;
     private final String desc;

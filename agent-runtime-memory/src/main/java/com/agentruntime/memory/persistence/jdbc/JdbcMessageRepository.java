@@ -46,6 +46,10 @@ public class JdbcMessageRepository implements MessageRepository {
             "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
                     + "FROM agent_message WHERE session_id = ? ORDER BY seq DESC LIMIT 1";
 
+    private static final String SQL_FIND_BY_SESSION_AND_SEQ =
+            "SELECT message_id, session_id, seq, role, content, compacted, evidence_id, created_at "
+                    + "FROM agent_message WHERE session_id = ? AND seq = ?";
+
     private static final String SQL_MARK_COMPACTED =
             "UPDATE agent_message SET compacted = true, evidence_id = ? WHERE message_id = ?";
 
@@ -59,8 +63,8 @@ public class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
-    public AgentMessage append(AgentMessage message) {
-        jdbcTemplate.update(SQL_INSERT,
+    public int append(AgentMessage message) {
+        return jdbcTemplate.update(SQL_INSERT,
                 message.getMessageId(),
                 message.getSessionId(),
                 message.getSeq(),
@@ -69,7 +73,13 @@ public class JdbcMessageRepository implements MessageRepository {
                 message.isCompacted(),
                 message.getEvidenceId(),
                 JdbcUtils.toTimestamp(message.getCreatedAt()));
-        return message;
+    }
+
+    @Override
+    public Optional<AgentMessage> findBySessionAndSeq(String sessionId, long seq) {
+        return jdbcTemplate.query(SQL_FIND_BY_SESSION_AND_SEQ, AgentRowMappers.MESSAGE, sessionId, seq)
+                .stream()
+                .findFirst();
     }
 
     @Override

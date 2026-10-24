@@ -31,8 +31,10 @@ import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.BudgetResult;
 import com.agentruntime.memory.compaction.SummaryCompactor;
 import com.agentruntime.memory.compaction.SummaryExecutor;
+import com.agentruntime.memory.history.SessionHistory;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.WriteTask;
+import com.agentruntime.memory.write.WriteTaskConverter;
 import com.agentruntime.memory.write.WriteTaskIdGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -44,7 +46,6 @@ import org.springframework.util.CollectionUtils;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -113,7 +114,7 @@ public class CompactingChatMemory implements ChatMemory {
             String messageId = UUID.randomUUID().toString();
             WriteTask task = newTask(sessionId, turnId, messageId, seq, roleCode,
                     messageConverter.encode(message));
-            if (!writePolicy.shouldWrite(sessionId, turnId, toAgentMessage(task))) {
+            if (!writePolicy.shouldWrite(sessionId, turnId, WriteTaskConverter.toMessage(task))) {
                 continue;
             }
             writeQueue.enqueue(task);
@@ -124,14 +125,12 @@ public class CompactingChatMemory implements ChatMemory {
     public List<Message> get(String conversationId) {
         // 记忆按 session 共享：传入的 conversationId 实为 sessionId
         String sessionId = conversationId;
-        List<AgentMessage> merged = loadAndMerge(sessionId);
         SummarySnapshot snapshot = summaryRepository.findLatestUsable(sessionId).orElse(null);
         SummaryContent content = extractStructured(snapshot);
         boolean hasSummary = isUsable(content);
-        long boundary = snapshot != null ? snapshot.getSummarizedUpToSeq() : 0L;
-
-        // 选择注入的历史：有摘要只取边界之后，无摘要取全部
-        List<AgentMessage> historyMessages = hasSummary ? tailAfter(merged, boundary) : merged;
+        long boundary = hasSummary ? snapshot.getSummarizedUpToSeq() : 0L;
+        List<AgentMessage> historyMessages = SessionHistory.load(
+                messageRepository, writeQueue, sessionId, boundary);
 
         // 预算判定 + 异步触发压缩（fire-and-forget，不阻塞）
         int summaryTokens = hasSummary ? tokenEstimator.estimate(new CompactionMessage(content).getText()) : 0;
@@ -159,29 +158,7 @@ public class CompactingChatMemory implements ChatMemory {
     @Override
     public void clear(String conversationId) {
         // 记忆按 session 共享：传入的 conversationId 实为 sessionId
-        writeQueue.drain(conversationId);
-        writeQueue.removeFromPending(conversationId);
-        messageRepository.deleteBySession(conversationId);
-    }
-
-    private List<AgentMessage> loadAndMerge(String sessionId) {
-        List<AgentMessage> merged = new ArrayList<>(messageRepository.findBySession(sessionId));
-        for (WriteTask task : writeQueue.peekAll(sessionId)) {
-            merged.add(toAgentMessage(task));
-        }
-        merged.sort(Comparator.comparingLong(AgentMessage::getSeq));
-        return merged;
-    }
-
-    /** 取 seq > boundary 的历史（摘要边界之后的原文） */
-    private List<AgentMessage> tailAfter(List<AgentMessage> merged, long boundary) {
-        List<AgentMessage> tail = new ArrayList<>();
-        for (AgentMessage m : merged) {
-            if (m.getSeq() > boundary) {
-                tail.add(m);
-            }
-        }
-        return tail;
+        writeQueue.discardSession(conversationId, () -> messageRepository.deleteBySession(conversationId));
     }
 
     /**
@@ -255,19 +232,6 @@ public class CompactingChatMemory implements ChatMemory {
         task.setCompacted(false);
         task.setCreatedAtEpochMillis(Instant.now().toEpochMilli());
         return task;
-    }
-
-    private AgentMessage toAgentMessage(WriteTask task) {
-        AgentMessage message = new AgentMessage();
-        message.setMessageId(task.getMessageId());
-        message.setSessionId(task.getSessionId());
-        message.setSeq(task.getSeq());
-        message.setRole(com.agentruntime.api.enums.MessageRoleEnum.of(task.getRoleCode()));
-        message.setContent(task.getContent());
-        message.setCompacted(task.isCompacted());
-        message.setEvidenceId(task.getEvidenceId());
-        message.setCreatedAt(Instant.ofEpochMilli(task.getCreatedAtEpochMillis()));
-        return message;
     }
 
     public ChatModel getChatModel() {

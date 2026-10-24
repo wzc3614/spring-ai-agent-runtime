@@ -51,6 +51,7 @@ import com.agentruntime.memory.write.MemoryWriteWorker;
 import com.agentruntime.memory.write.RedisSessionSeqProvider;
 import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
+import com.agentruntime.runtime.hook.TurnPrepareExecutor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -138,15 +139,16 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public SessionSeqProvider sessionSeqProvider(StringRedisTemplate redisTemplate, MessageRepository messageRepository) {
-        return new RedisSessionSeqProvider(redisTemplate, messageRepository);
+    public SessionSeqProvider sessionSeqProvider(StringRedisTemplate redisTemplate, MessageRepository messageRepository,
+                                                  MemoryWriteQueue memoryWriteQueue) {
+        return new RedisSessionSeqProvider(redisTemplate, messageRepository, memoryWriteQueue);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public MemoryWriteWorker memoryWriteWorker(MemoryWriteQueue queue, MessageRepository messageRepository,
-                                                TransactionPort transactionPort, StringRedisTemplate redisTemplate) {
-        return new MemoryWriteWorker(queue, messageRepository, transactionPort, redisTemplate);
+                                                TransactionPort transactionPort, SessionSeqProvider sessionSeqProvider) {
+        return new MemoryWriteWorker(queue, messageRepository, transactionPort, sessionSeqProvider);
     }
 
     @Bean
@@ -175,6 +177,12 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public TurnPrepareExecutor turnPrepareExecutor() {
+        return new TurnPrepareExecutor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public AgentRuntimeFactory agentRuntimeFactory(SessionRepository sessionRepository,
                                                     ObservabilityRecorder recorder,
                                                     ObjectMapper objectMapper,
@@ -182,10 +190,11 @@ public class AgentRuntimeAutoConfiguration {
                                                     com.agentruntime.api.spi.ToolFailureClassifier toolFailureClassifier,
                                                     com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults,
                                                     TokenEstimator tokenEstimator,
-                                                    ObjectProvider<SkillRuntime> skillRuntime) {
+                                                    ObjectProvider<SkillRuntime> skillRuntime,
+                                                    TurnPrepareExecutor turnPrepareExecutor) {
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
                 toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator,
-                skillRuntime.getIfAvailable());
+                skillRuntime.getIfAvailable(), turnPrepareExecutor.getExecutor());
     }
 
     // ----- Observability -----

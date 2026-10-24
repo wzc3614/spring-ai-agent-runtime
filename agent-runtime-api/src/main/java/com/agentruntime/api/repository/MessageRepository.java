@@ -30,9 +30,18 @@ public interface MessageRepository {
      * 落库用 ON CONFLICT(session_id, seq) DO NOTHING 保证幂等。
      *
      * @param message 消息实体
-     * @return 保存后的实体
+     * @return 1 表示插入成功，0 表示该 seq 已存在
      */
-    AgentMessage append(AgentMessage message);
+    int append(AgentMessage message);
+
+    /**
+     * 按会话和 seq 精确查询一条消息，用于区分幂等重试和序号冲突。
+     *
+     * @param sessionId 会话 ID
+     * @param seq       消息 seq
+     * @return 已落库的消息
+     */
+    Optional<AgentMessage> findBySessionAndSeq(String sessionId, long seq);
 
     /**
      * 按会话查询全部消息，按 seq 升序。

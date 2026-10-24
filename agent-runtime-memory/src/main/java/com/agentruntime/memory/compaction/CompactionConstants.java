@@ -55,6 +55,9 @@ public final class CompactionConstants {
     /** 阶段：第四层结构化校验 */
     public static final String STAGE_VALIDATE = "VALIDATE";
 
+    /** 压缩锁续期间隔 = TTL / 该值。续期成功就把 TTL 重新铺满 */
+    public static final int LOCK_RENEW_DIVISOR = 3;
+
     private CompactionConstants() {
     }
 }

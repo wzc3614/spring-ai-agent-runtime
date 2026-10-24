@@ -25,6 +25,8 @@ import com.agentruntime.core.tool.ToolMetaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ChatModel;
 
+import java.util.concurrent.Executor;
+
 /**
  * AgentRuntime 工厂（Spring bean，持有会话仓储等基础设施）。
  * 使用者注入此工厂后调用 {@link #builder(ChatModel)} 获得流式 builder。
@@ -48,12 +50,16 @@ public class AgentRuntimeFactory {
     /** 为空表示 Skill 未启用 */
     private final SkillRuntime skillRuntime;
 
+    /** Skill 准备与轮次钩子并行时使用的执行器 */
+    private final Executor turnExecutor;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
                                ObservabilityRecorder recorder, ObjectMapper objectMapper,
                                ToolMetaRegistry toolMetaRegistry,
                                ToolFailureClassifier toolFailureClassifier,
                                ToolGovernanceDefaults governanceDefaults,
-                               TokenEstimator tokenEstimator, SkillRuntime skillRuntime) {
+                               TokenEstimator tokenEstimator, SkillRuntime skillRuntime,
+                               Executor turnExecutor) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
@@ -62,6 +68,7 @@ public class AgentRuntimeFactory {
         this.governanceDefaults = governanceDefaults;
         this.tokenEstimator = tokenEstimator;
         this.skillRuntime = skillRuntime;
+        this.turnExecutor = turnExecutor;
     }
 
     /**
@@ -104,5 +111,9 @@ public class AgentRuntimeFactory {
 
     public SkillRuntime getSkillRuntime() {
         return skillRuntime;
+    }
+
+    public Executor getTurnExecutor() {
+        return turnExecutor;
     }
 }

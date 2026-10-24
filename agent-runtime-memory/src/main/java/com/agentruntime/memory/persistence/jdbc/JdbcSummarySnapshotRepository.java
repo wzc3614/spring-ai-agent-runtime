@@ -19,16 +19,19 @@ import com.agentruntime.api.domain.SummarySnapshot;
 import com.agentruntime.api.enums.SummaryStatusEnum;
 import com.agentruntime.api.repository.SummarySnapshotRepository;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.Optional;
 
 /**
- * agent_summary_snapshot 的 JDBC 实现。save 始终插入新版本，version 由调用方或 DB 递增。
- * sections 列存通用内容 JSON（由 memory 层负责与 SummaryContent 互转），
- * summarized_up_to_seq 标识已摘要覆盖的 message seq 边界。
+ * agent_summary_snapshot 的 JDBC 实现。save 在数据库里取 MAX(version)+1，
+ * 唯一约束冲突时重试。sections 列存通用内容 JSON，summarized_up_to_seq 是摘要边界。
  */
 public class JdbcSummarySnapshotRepository implements SummarySnapshotRepository {
+
+    /** 并发插入撞上唯一约束时的重试次数 */
+    private static final int VERSION_INSERT_ATTEMPTS = 3;
 
     private static final String SQL_FIND_LATEST =
             "SELECT summary_id, session_id, version, sections, summarized_up_to_seq, status, error_message, updated_at "
@@ -39,9 +42,15 @@ public class JdbcSummarySnapshotRepository implements SummarySnapshotRepository 
                     + "FROM agent_summary_snapshot WHERE session_id = ? AND status <> ? "
                     + "ORDER BY version DESC LIMIT 1";
 
+    /**
+     * version 用标量子查询计算。空会话时 MAX 为 NULL，COALESCE 得到 1。
+     * 不能写成 FROM 本表的 INSERT SELECT，否则没有旧行时插入 0 行。
+     */
     private static final String SQL_INSERT =
-            "INSERT INTO agent_summary_snapshot (summary_id, session_id, version, sections, summarized_up_to_seq, status, error_message, updated_at) "
-                    + "VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)";
+            "INSERT INTO agent_summary_snapshot "
+                    + "(summary_id, session_id, version, sections, summarized_up_to_seq, status, error_message, updated_at) "
+                    + "VALUES (?, ?, (SELECT COALESCE(MAX(version), 0) + 1 FROM agent_summary_snapshot WHERE session_id = ?), "
+                    + "?::jsonb, ?, ?, ?, ?) RETURNING version";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -66,15 +75,29 @@ public class JdbcSummarySnapshotRepository implements SummarySnapshotRepository 
 
     @Override
     public SummarySnapshot save(SummarySnapshot snapshot) {
-        jdbcTemplate.update(SQL_INSERT,
-                snapshot.getSummaryId(),
-                snapshot.getSessionId(),
-                snapshot.getVersion(),
-                snapshot.getSections(),
-                snapshot.getSummarizedUpToSeq(),
-                snapshot.getStatus(),
-                snapshot.getErrorMessage(),
-                JdbcUtils.toTimestamp(snapshot.getUpdatedAt()));
-        return snapshot;
+        DuplicateKeyException lastConflict = null;
+        for (int attempt = 1; attempt <= VERSION_INSERT_ATTEMPTS; attempt++) {
+            try {
+                Number version = jdbcTemplate.queryForObject(SQL_INSERT, Number.class,
+                        snapshot.getSummaryId(),
+                        snapshot.getSessionId(),
+                        snapshot.getSessionId(),
+                        snapshot.getSections(),
+                        snapshot.getSummarizedUpToSeq(),
+                        snapshot.getStatus(),
+                        snapshot.getErrorMessage(),
+                        JdbcUtils.toTimestamp(snapshot.getUpdatedAt()));
+                if (version == null) {
+                    throw new IllegalStateException("summary version missing, sessionId=" + snapshot.getSessionId());
+                }
+                snapshot.setVersion(version.intValue());
+                return snapshot;
+            } catch (DuplicateKeyException e) {
+                lastConflict = e;
+            }
+        }
+        throw lastConflict == null
+                ? new IllegalStateException("summary insert failed, sessionId=" + snapshot.getSessionId())
+                : lastConflict;
     }
 }

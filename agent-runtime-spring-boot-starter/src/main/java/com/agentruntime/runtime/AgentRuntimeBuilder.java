@@ -19,6 +19,7 @@ import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.spill.SpillConfig;
 import com.agentruntime.capability.skill.trace.SkillToolTraceCallback;
 import com.agentruntime.core.tool.ToolObjectResolver;
+import com.agentruntime.runtime.hook.TurnHook;
 import com.agentruntime.memory.chat.CompactingChatMemory;
 import com.agentruntime.observability.ObservabilityToolCallback;
 import com.agentruntime.observability.ObservingChatModel;
@@ -29,11 +30,12 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * AgentRuntime 流式 builder。基础设施由 {@link AgentRuntimeFactory} 注入，
- * 用户设置 agentName / agentVersion / defaultSystem / defaultOptions / tools / memory / spill / listener。
+ * 用户设置 agentName / agentVersion / defaultSystem / defaultOptions / tools / memory / spill / listener / turnHooks。
  */
 public class AgentRuntimeBuilder {
 
@@ -46,6 +48,7 @@ public class AgentRuntimeBuilder {
     private ChatOptions defaultOptions;
     private Object[] tools;
     private CompactingChatMemory memory;
+    private List<TurnHook> turnHooks = List.of();
     private SpillConfig spillConfig;
     private AgentLifecycleListener listener;
 
@@ -95,6 +98,21 @@ public class AgentRuntimeBuilder {
     }
 
     /**
+     * 注册本轮钩子。按传入顺序执行，先打断的钩子生效。
+     *
+     * @param hooks 钩子
+     * @return builder
+     */
+    public AgentRuntimeBuilder turnHooks(TurnHook... hooks) {
+        if (hooks == null || hooks.length == 0) {
+            this.turnHooks = List.of();
+            return this;
+        }
+        this.turnHooks = List.copyOf(Arrays.asList(hooks));
+        return this;
+    }
+
+    /**
      * 构建 AgentRuntime。
      *
      * @return AgentRuntime
@@ -133,6 +151,7 @@ public class AgentRuntimeBuilder {
         ChatClient chatClient = builder.build();
         return new AgentRuntime(chatClient, agentName, agentVersion, memory, spillConfig, listener,
                 factory.getSessionRepository(), factory.getRecorder(), resolvedTools,
-                defaultSystem, factory.getTokenEstimator(), factory.getSkillRuntime());
+                defaultSystem, factory.getTokenEstimator(), factory.getSkillRuntime(),
+                turnHooks, factory.getTurnExecutor(), factory.getObjectMapper());
     }
 }

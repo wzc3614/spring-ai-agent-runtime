@@ -25,6 +25,10 @@ import com.agentruntime.capability.skill.SkillActivation;
 import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.capability.skill.SkillTurnPlan;
 import com.agentruntime.capability.skill.trace.SkillExecutionContext;
+import com.agentruntime.runtime.hook.TurnHook;
+import com.agentruntime.runtime.hook.TurnHookEvents;
+import com.agentruntime.runtime.hook.TurnHookGate;
+import com.agentruntime.runtime.hook.TurnHookResult;
 import com.agentruntime.api.lifecycle.AgentLifecycleEvent;
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.lifecycle.AgentLifecycleTypeEnum;
@@ -36,11 +40,15 @@ import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
 import com.agentruntime.memory.chat.CompactingChatMemory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.util.CollectionUtils;
+
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.SignalType;
 import reactor.util.context.Context;
@@ -51,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * Agent 运行时入口。包装 Spring AI {@link ChatClient}，挂载记忆 Advisor，
@@ -58,8 +67,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>两层 ID：uid（用户）→ sessionId（会话生命周期 + 记忆作用域）。记忆按 session 共享累积，
  * 跨调用持久化。turnId 在内部按"一轮用户交互"生成，不暴露到公开签名。
+ * 注册了轮次钩子时，Skill 准备与第一阶段并行，组装 prompt 前执行第二阶段；钩子可以提前返回。
  */
 public class AgentRuntime {
+
+    private static final Logger logger = LoggerFactory.getLogger(AgentRuntime.class);
 
     private final ChatClient chatClient;
     private final String agentName;
@@ -83,6 +95,16 @@ public class AgentRuntime {
     /** Skill 管道。为空表示未启用，call/stream 保持原行为 */
     private final SkillRuntime skillRuntime;
 
+    /** 本轮业务钩子，按注册顺序执行。为空时 Skill 准备仍在请求线程执行 */
+    private final List<TurnHook> turnHooks;
+
+    /** Skill 准备与钩子并行时使用的执行器 */
+    private final Executor turnExecutor;
+
+    private final ObjectMapper objectMapper;
+
+    private final TurnHookGate turnHookGate = new TurnHookGate();
+
     /** 会话开始时间，用于计算 duration */
     private final Map<String, Instant> startedAtMap = new ConcurrentHashMap<>();
 
@@ -96,7 +118,8 @@ public class AgentRuntime {
                         CompactingChatMemory memory, SpillConfig spillConfig,
                         AgentLifecycleListener listener, SessionRepository sessionRepository,
                         ObservabilityRecorder recorder, List<ToolCallback> tools,
-                        String defaultSystem, TokenEstimator tokenEstimator, SkillRuntime skillRuntime) {
+                        String defaultSystem, TokenEstimator tokenEstimator, SkillRuntime skillRuntime,
+                        List<TurnHook> turnHooks, Executor turnExecutor, ObjectMapper objectMapper) {
         this.chatClient = chatClient;
         this.agentName = agentName;
         this.agentVersion = agentVersion;
@@ -109,6 +132,9 @@ public class AgentRuntime {
         this.defaultSystem = defaultSystem;
         this.tokenEstimator = tokenEstimator;
         this.skillRuntime = skillRuntime;
+        this.turnHooks = turnHooks == null ? List.of() : List.copyOf(turnHooks);
+        this.turnExecutor = turnExecutor;
+        this.objectMapper = objectMapper;
         this.toolSchemaTokens = estimateToolSchemaTokens(tools);
     }
 
@@ -125,11 +151,18 @@ public class AgentRuntime {
         String sessionSpanId = sessionSpanIds.get(sessionId);
         Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
         SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
-        SkillTurnPlan plan = preparePlan(userText);
-        SkillActivation activation = beginSkill(turnSpan, sessionId, plan);
-        MemoryBudgetContextHolder.set(estimateFixedOverhead(userText, plan));
+        SkillActivation activation = null;
         boolean success = false;
         try {
+            TurnHookResult gate = openGate(uid, sessionId, userText);
+            if (gate.isInterrupted()) {
+                recordInterrupted(turnSpan, gate);
+                success = true;
+                return gate.getReply();
+            }
+            SkillTurnPlan plan = gate.getPlan();
+            activation = beginSkill(turnSpan, sessionId, plan);
+            MemoryBudgetContextHolder.set(estimateFixedOverhead(userText, plan));
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
             String reply = applySkill(chatClient.prompt().user(userText), plan)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
@@ -156,15 +189,30 @@ public class AgentRuntime {
      * @return 模型回复 token 流
      */
     public Flux<String> stream(String uid, String sessionId, String userText) {
-        return Flux.defer(() -> {
-            ensureStarted(uid, sessionId);
-            String sessionSpanId = sessionSpanIds.get(sessionId);
-            Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
-            SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
-            SkillTurnPlan plan = preparePlan(userText);
-            SkillActivation activation = beginSkill(turnSpan, sessionId, plan);
+        return Flux.defer(() -> openStream(uid, sessionId, userText));
+    }
+
+    /**
+     * 流式轮次的同步前半段：钩子门闩通过后才把模型流交回去。
+     */
+    private Flux<String> openStream(String uid, String sessionId, String userText) {
+        ensureStarted(uid, sessionId);
+        String sessionSpanId = sessionSpanIds.get(sessionId);
+        Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
+        SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
+        SkillActivation activation = null;
+        try {
+            TurnHookResult gate = openGate(uid, sessionId, userText);
+            if (gate.isInterrupted()) {
+                recordInterrupted(turnSpan, gate);
+                return Flux.just(gate.getReply())
+                        .doFinally(signal -> finishStream(turnSpan, null, signal));
+            }
+            SkillTurnPlan plan = gate.getPlan();
+            activation = beginSkill(turnSpan, sessionId, plan);
             MemoryBudgetContextHolder.set(estimateFixedOverhead(userText, plan));
             StringBuilder accumulated = new StringBuilder();
+            SkillActivation started = activation;
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
             return applySkill(chatClient.prompt().user(userText), plan)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
@@ -173,9 +221,12 @@ public class AgentRuntime {
                     .doOnNext(accumulated::append)
                     .doOnComplete(() -> recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY,
                             accumulated.toString()))
-                    .doFinally(signal -> finishStream(turnSpan, activation, signal))
-                    .contextWrite(turnContext(sessionId, turnSpan, activation));
-        });
+                    .doFinally(signal -> finishStream(turnSpan, started, signal))
+                    .contextWrite(turnContext(sessionId, turnSpan, started));
+        } catch (RuntimeException ex) {
+            finishStream(turnSpan, activation, SignalType.ON_ERROR);
+            throw ex;
+        }
     }
 
     /**
@@ -283,6 +334,19 @@ public class AgentRuntime {
         int userTokens = userText == null ? 0 : tokenEstimator.estimate(userText);
         return systemTokens + estimateInstructionTokens(plan.getInstructionMessages())
                 + estimateToolSchemaTokens(plan.getTools()) + userTokens;
+    }
+
+    private TurnHookResult openGate(String uid, String sessionId, String userText) {
+        return turnHookGate.open(uid, sessionId, userText, () -> preparePlan(userText), turnHooks, turnExecutor);
+    }
+
+    /**
+     * 记录钩子提前返回。日志只保留阶段和原因码，不打印用户原文或回复正文。
+     */
+    private void recordInterrupted(Span turnSpan, TurnHookResult gate) {
+        logger.info("turn interrupted, phase={}, reason={}", gate.getPhase().getCode(), gate.getReasonCode());
+        recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.TURN_INTERRUPTED,
+                TurnHookEvents.payload(objectMapper, gate));
     }
 
     private SkillTurnPlan preparePlan(String userText) {

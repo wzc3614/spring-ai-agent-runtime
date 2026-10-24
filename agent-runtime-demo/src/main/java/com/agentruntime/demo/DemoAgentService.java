@@ -83,6 +83,8 @@ public class DemoAgentService {
                 .defaultOptions(OpenAiChatOptions.builder().temperature(0.7).build())
                 .tools(businessTool, badCaseTool)
                 .memory(memory)
+                // 对客风控演示：消息含「敏感词演练」或「风控演练」时提前返回
+                .turnHooks(new DemoRiskTurnHook())
                 .listener(AgentLifecycleListener.onFinished(event -> {
                     log.info("session finished: agent={}, duration={}",
                             event.getSession().getAgentName(), event.getSession().getDuration());
