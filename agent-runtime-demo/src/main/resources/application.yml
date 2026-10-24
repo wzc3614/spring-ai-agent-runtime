@@ -34,3 +34,13 @@ agent-runtime:
   observability:
     persist:
       mode: async
+
+# Skill：classpath 的 order-query 门控订单工具。未被 Skill 引用的工具保持常开。
+agent:
+  runtime:
+    skill:
+      enabled: true
+      instruction-max-tokens: 2000
+      router:
+        top-n: 1
+        llm-enabled: true

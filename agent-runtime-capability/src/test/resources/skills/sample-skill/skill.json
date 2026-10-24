@@ -1,0 +1,11 @@
+{
+  "skillId": "sample-skill",
+  "name": "Sample",
+  "description": "sample skill for tests",
+  "notFor": ["do not use"],
+  "triggers": ["sample-trigger"],
+  "toolRefs": ["sample_tool"],
+  "instructionRef": "classpath:skills/sample-skill/INSTRUCTION.md",
+  "version": "1",
+  "enabled": true
+}

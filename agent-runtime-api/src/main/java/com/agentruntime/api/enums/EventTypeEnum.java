@@ -36,7 +36,22 @@ public enum EventTypeEnum {
     ERROR("ERROR", "error"),
 
     /** 记忆压缩失败（不驱逐对应 Turn，仅可观测） */
-    COMPACTION_FAILED("COMPACTION_FAILED", "compaction failed");
+    COMPACTION_FAILED("COMPACTION_FAILED", "compaction failed"),
+
+    /** Skill 路由结果 */
+    SKILL_ROUTED("SKILL_ROUTED", "skill routed"),
+
+    /** Skill 激活，指令已加载 */
+    SKILL_ACTIVATED("SKILL_ACTIVATED", "skill activated"),
+
+    /** Skill 执行结束 */
+    SKILL_EXECUTED("SKILL_EXECUTED", "skill executed"),
+
+    /** Skill 退出 */
+    SKILL_DEACTIVATED("SKILL_DEACTIVATED", "skill deactivated"),
+
+    /** Skill 加载超出 token 预算 */
+    SKILL_LOAD_BUDGET_EXCEEDED("SKILL_LOAD_BUDGET_EXCEEDED", "skill load budget exceeded");
 
     private final String code;
     private final String desc;

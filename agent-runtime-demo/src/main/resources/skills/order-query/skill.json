@@ -1,0 +1,14 @@
+{
+  "skillId": "order-query",
+  "name": "订单查询",
+  "description": "查询用户资料、订单状态、物流和退款进度",
+  "notFor": ["修改订单", "取消订单", "支付"],
+  "triggers": ["订单", "物流", "退款"],
+  "toolRefs": ["query_user_info", "query_recent_orders"],
+  "instructionRef": "classpath:skills/order-query/INSTRUCTION.md",
+  "version": "1",
+  "enabled": true,
+  "meta": {
+    "owner": "demo"
+  }
+}

@@ -40,7 +40,6 @@
         <dependency>
             <groupId>com.agentruntime</groupId>
             <artifactId>agent-runtime-capability</artifactId>
-            <optional>true</optional>
         </dependency>
 
         <dependency>

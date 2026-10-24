@@ -33,7 +33,10 @@ public enum SpanTypeEnum {
     TOOL_CALL("TOOL_CALL", "tool call"),
 
     /** 一次记忆压缩 */
-    COMPACTION("COMPACTION", "compaction");
+    COMPACTION("COMPACTION", "compaction"),
+
+    /** 一轮中激活的 Skill */
+    SKILL("SKILL", "skill");
 
     private final String code;
     private final String desc;

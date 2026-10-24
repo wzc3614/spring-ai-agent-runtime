@@ -1,5 +1,7 @@
 package com.agentruntime.demo;
 
+import com.agentruntime.autoconfigure.SkillProperties;
+
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.openai.autoconfigure.OpenAiChatProperties;
 import org.springframework.ai.model.openai.autoconfigure.OpenAiConnectionProperties;
@@ -7,6 +9,7 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.ResponseErrorHandler;
@@ -53,5 +56,13 @@ public class ChatModelConfig {
                 .openAiApi(flashApi)
                 .defaultOptions(flashOptions)
                 .build();
+    }
+
+    /**
+     * Skill 关键词未命中时的轻量路由模型，复用摘要用的 flash 模型。
+     */
+    @Bean(name = SkillProperties.ROUTER_MODEL_BEAN)
+    public ChatModel skillRouterChatModel(@Qualifier(COMPACT_CHAT_MODEL) ChatModel compactChatModel) {
+        return compactChatModel;
     }
 }

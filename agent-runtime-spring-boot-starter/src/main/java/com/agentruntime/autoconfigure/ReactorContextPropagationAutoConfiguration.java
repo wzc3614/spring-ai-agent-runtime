@@ -15,6 +15,7 @@
  */
 package com.agentruntime.autoconfigure;
 
+import com.agentruntime.capability.skill.trace.SkillExecutionContext;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
 
@@ -40,6 +41,7 @@ public class ReactorContextPropagationAutoConfiguration {
     void enableContextPropagation() {
         SpanContextHolder.registerThreadLocalAccessors(ContextRegistry.getInstance());
         MemoryBudgetContextHolder.registerThreadLocalAccessor(ContextRegistry.getInstance());
+        SkillExecutionContext.registerThreadLocalAccessor(ContextRegistry.getInstance());
         Hooks.enableAutomaticContextPropagation();
     }
 }

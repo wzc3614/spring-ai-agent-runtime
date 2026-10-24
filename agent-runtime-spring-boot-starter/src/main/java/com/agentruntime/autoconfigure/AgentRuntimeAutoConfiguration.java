@@ -49,12 +49,14 @@ import com.agentruntime.memory.write.AlwaysWritePolicy;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.MemoryWriteWorker;
 import com.agentruntime.memory.write.RedisSessionSeqProvider;
+import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -179,9 +181,11 @@ public class AgentRuntimeAutoConfiguration {
                                                     com.agentruntime.core.tool.ToolMetaRegistry toolMetaRegistry,
                                                     com.agentruntime.api.spi.ToolFailureClassifier toolFailureClassifier,
                                                     com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults,
-                                                    TokenEstimator tokenEstimator) {
+                                                    TokenEstimator tokenEstimator,
+                                                    ObjectProvider<SkillRuntime> skillRuntime) {
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
-                toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator);
+                toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator,
+                skillRuntime.getIfAvailable());
     }
 
     // ----- Observability -----

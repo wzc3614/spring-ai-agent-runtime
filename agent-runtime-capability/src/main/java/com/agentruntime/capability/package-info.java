@@ -17,11 +17,8 @@
 /**
  * Capability supply subsystem.
  *
- * <p>Two halves: skill loading (classpath built-in + DB dynamic, where DB overrides
- * same-name built-in skills and takes effect on the next spawn) and MCP / tool
- * hot-plug driven by a config-center SPI (default Nacos, with Apollo and a
- * zero-dependency local-file fallback). Hot updates are safe via diff refresh and
- * reference-counting delayed close so in-flight calls finish before a retired tool
- * connection is released.
+ * <p>Skill loading is implemented: classpath plus JDBC (JDBC overrides the same
+ * skill id), keyword then lightweight-model routing, progressive instruction
+ * loading, and skill lifecycle events. MCP / tool hot-plug is not implemented yet.
  */
 package com.agentruntime.capability;

@@ -17,6 +17,7 @@ package com.agentruntime.runtime;
 
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.spill.SpillConfig;
+import com.agentruntime.capability.skill.trace.SkillToolTraceCallback;
 import com.agentruntime.core.tool.ToolObjectResolver;
 import com.agentruntime.memory.chat.CompactingChatMemory;
 import com.agentruntime.observability.ObservabilityToolCallback;
@@ -110,15 +111,18 @@ public class AgentRuntimeBuilder {
             builder.defaultOptions(defaultOptions);
         }
         if (tools != null && tools.length > 0) {
-            // 解析 + 包装：raw -> GovernedToolCallback(重试/分类) -> ObservabilityToolCallback(span/事件)
-            // 观测在最外层，一次逻辑工具调用对应一个 TOOL_CALL span，重试作为 span 内事件
+            // 解析 + 包装：raw -> GovernedToolCallback(重试/分类) -> SkillToolTraceCallback -> ObservabilityToolCallback
+            // 观测在最外层，一次逻辑工具调用对应一个 TOOL_CALL span，重试作为 span 内事件。
+            // Skill 未启用时不插入轨迹装饰器。
             ToolCallback[] callbacks = new ToolObjectResolver().resolve(tools);
             List<ToolCallback> wrapped = new ArrayList<>(callbacks.length);
+            boolean traceSkillCalls = factory.getSkillRuntime() != null;
             for (ToolCallback callback : callbacks) {
                 ToolCallback governed = new com.agentruntime.core.tool.GovernedToolCallback(callback,
                         factory.getToolMetaRegistry(), factory.getToolFailureClassifier(),
                         factory.getGovernanceDefaults());
-                wrapped.add(new ObservabilityToolCallback(governed, factory.getRecorder(), factory.getObjectMapper()));
+                ToolCallback traced = traceSkillCalls ? new SkillToolTraceCallback(governed) : governed;
+                wrapped.add(new ObservabilityToolCallback(traced, factory.getRecorder(), factory.getObjectMapper()));
             }
             resolvedTools = wrapped;
         }
@@ -129,6 +133,6 @@ public class AgentRuntimeBuilder {
         ChatClient chatClient = builder.build();
         return new AgentRuntime(chatClient, agentName, agentVersion, memory, spillConfig, listener,
                 factory.getSessionRepository(), factory.getRecorder(), resolvedTools,
-                defaultSystem, factory.getTokenEstimator());
+                defaultSystem, factory.getTokenEstimator(), factory.getSkillRuntime());
     }
 }

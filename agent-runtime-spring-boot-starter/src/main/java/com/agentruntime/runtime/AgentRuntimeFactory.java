@@ -19,6 +19,7 @@ import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
 import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.api.spi.ToolFailureClassifier;
+import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.core.tool.ToolGovernanceDefaults;
 import com.agentruntime.core.tool.ToolMetaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,12 +45,15 @@ public class AgentRuntimeFactory {
 
     private final TokenEstimator tokenEstimator;
 
+    /** 为空表示 Skill 未启用 */
+    private final SkillRuntime skillRuntime;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
                                ObservabilityRecorder recorder, ObjectMapper objectMapper,
                                ToolMetaRegistry toolMetaRegistry,
                                ToolFailureClassifier toolFailureClassifier,
                                ToolGovernanceDefaults governanceDefaults,
-                               TokenEstimator tokenEstimator) {
+                               TokenEstimator tokenEstimator, SkillRuntime skillRuntime) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
@@ -57,6 +61,7 @@ public class AgentRuntimeFactory {
         this.toolFailureClassifier = toolFailureClassifier;
         this.governanceDefaults = governanceDefaults;
         this.tokenEstimator = tokenEstimator;
+        this.skillRuntime = skillRuntime;
     }
 
     /**
@@ -95,5 +100,9 @@ public class AgentRuntimeFactory {
 
     public TokenEstimator getTokenEstimator() {
         return tokenEstimator;
+    }
+
+    public SkillRuntime getSkillRuntime() {
+        return skillRuntime;
     }
 }

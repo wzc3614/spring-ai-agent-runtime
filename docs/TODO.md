@@ -51,7 +51,7 @@
 - [ ] D6 查询 + ASCII 树渲染器 + REST（本期不做）
 
 ### E. Capability（M2，未建）
-- [ ] E1 Skill 加载（classpath + DB 动态，DB 覆盖同名）
+- [x] E1 Skill 加载（classpath + DB 动态，DB 覆盖同名）+ 关键词/轻量模型路由 + 渐进加载 + Skill 事件
 - [ ] E2 MCP/工具热插拔（Nacos 默认 + 降级）
 - [ ] E3 差量刷新 + 引用计数延迟关闭
 - [ ] E4 `DynamicToolCallbackProvider`

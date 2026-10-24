@@ -19,7 +19,12 @@ import com.agentruntime.api.domain.AgentSession;
 import com.agentruntime.api.domain.Span;
 import com.agentruntime.api.enums.EventTypeEnum;
 import com.agentruntime.api.enums.SessionStatusEnum;
+import com.agentruntime.api.enums.SkillDeactivateReasonEnum;
 import com.agentruntime.api.enums.SpanTypeEnum;
+import com.agentruntime.capability.skill.SkillActivation;
+import com.agentruntime.capability.skill.SkillRuntime;
+import com.agentruntime.capability.skill.SkillTurnPlan;
+import com.agentruntime.capability.skill.trace.SkillExecutionContext;
 import com.agentruntime.api.lifecycle.AgentLifecycleEvent;
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.api.lifecycle.AgentLifecycleTypeEnum;
@@ -33,9 +38,11 @@ import com.agentruntime.core.springai.SpanContextHolder;
 import com.agentruntime.memory.chat.CompactingChatMemory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.util.CollectionUtils;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 import reactor.util.context.Context;
 
 import java.time.Duration;
@@ -70,8 +77,11 @@ public class AgentRuntime {
     /** 系统提示词（用于估算固定开销） */
     private final String defaultSystem;
 
-    /** 工具 schema 的 token 估算（构造时一次性计算，避免每轮重复估算） */
+    /** 工具 schema 的 token 估算。Skill 透传时复用；Skill 裁剪工具后按本轮工具重算 */
     private final int toolSchemaTokens;
+
+    /** Skill 管道。为空表示未启用，call/stream 保持原行为 */
+    private final SkillRuntime skillRuntime;
 
     /** 会话开始时间，用于计算 duration */
     private final Map<String, Instant> startedAtMap = new ConcurrentHashMap<>();
@@ -86,7 +96,7 @@ public class AgentRuntime {
                         CompactingChatMemory memory, SpillConfig spillConfig,
                         AgentLifecycleListener listener, SessionRepository sessionRepository,
                         ObservabilityRecorder recorder, List<ToolCallback> tools,
-                        String defaultSystem, TokenEstimator tokenEstimator) {
+                        String defaultSystem, TokenEstimator tokenEstimator, SkillRuntime skillRuntime) {
         this.chatClient = chatClient;
         this.agentName = agentName;
         this.agentVersion = agentVersion;
@@ -98,6 +108,7 @@ public class AgentRuntime {
         this.tools = tools;
         this.defaultSystem = defaultSystem;
         this.tokenEstimator = tokenEstimator;
+        this.skillRuntime = skillRuntime;
         this.toolSchemaTokens = estimateToolSchemaTokens(tools);
     }
 
@@ -114,23 +125,21 @@ public class AgentRuntime {
         String sessionSpanId = sessionSpanIds.get(sessionId);
         Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
         SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
-        MemoryBudgetContextHolder.set(estimateFixedOverhead(userText));
+        SkillTurnPlan plan = preparePlan(userText);
+        SkillActivation activation = beginSkill(turnSpan, sessionId, plan);
+        MemoryBudgetContextHolder.set(estimateFixedOverhead(userText, plan));
+        boolean success = false;
         try {
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
-            ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userText);
-            if (!CollectionUtils.isEmpty(tools)) {
-                spec = spec.toolCallbacks(tools);
-            }
-            String reply = spec
+            String reply = applySkill(chatClient.prompt().user(userText), plan)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
                     .call()
                     .content();
             recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY, reply);
+            success = true;
             return reply;
         } finally {
-            MemoryBudgetContextHolder.clear();
-            SpanContextHolder.clear();
-            recorder.endSpan(turnSpan.getSpanId());
+            finishSync(turnSpan, activation, success);
         }
     }
 
@@ -152,28 +161,20 @@ public class AgentRuntime {
             String sessionSpanId = sessionSpanIds.get(sessionId);
             Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
             SpanContextHolder.set(turnSpan.getSpanId(), sessionId);
-            MemoryBudgetContextHolder.set(estimateFixedOverhead(userText));
+            SkillTurnPlan plan = preparePlan(userText);
+            SkillActivation activation = beginSkill(turnSpan, sessionId, plan);
+            MemoryBudgetContextHolder.set(estimateFixedOverhead(userText, plan));
             StringBuilder accumulated = new StringBuilder();
             // 工具按 prompt 传递（GA: toolCallbacks(List) 携带回调；tools(Object...) 只收原始对象）
-            ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userText);
-            if (!CollectionUtils.isEmpty(tools)) {
-                spec = spec.toolCallbacks(tools);
-            }
-            return spec
+            return applySkill(chatClient.prompt().user(userText), plan)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
                     .stream()
                     .content()
                     .doOnNext(accumulated::append)
                     .doOnComplete(() -> recorder.recordEvent(turnSpan.getSpanId(), EventTypeEnum.FINAL_REPLY,
                             accumulated.toString()))
-                    .doFinally(s -> {
-                        MemoryBudgetContextHolder.clear();
-                        SpanContextHolder.clear();
-                        recorder.endSpan(turnSpan.getSpanId());
-                    })
-                    .contextWrite(Context.of(
-                            SpanContextHolder.CONTEXT_KEY_PARENT_SPAN_ID, turnSpan.getSpanId(),
-                            SpanContextHolder.CONTEXT_KEY_SESSION_ID, sessionId));
+                    .doFinally(signal -> finishStream(turnSpan, activation, signal))
+                    .contextWrite(turnContext(sessionId, turnSpan, activation));
         });
     }
 
@@ -265,21 +266,131 @@ public class AgentRuntime {
     }
 
     /**
-     * 估算当前轮固定开销 token：系统提示词 + 工具 schema + 当前用户输入。
+     * 估算当前轮固定开销 token：系统提示词 + 指令 + 本轮工具 schema + 当前用户输入。
      * 在调用 ChatClient 前写入 {@link MemoryBudgetContextHolder}，供记忆层动态预算计算读取。
      *
      * @param userText 当前用户输入
+     * @param plan     Skill 计划。透传时沿用构造期的工具 schema 估算
      * @return 固定开销 token 估算
      */
-    private int estimateFixedOverhead(String userText) {
-        int systemTokens = defaultSystem == null ? 0 : tokenEstimator.estimate(defaultSystem);
+    private int estimateFixedOverhead(String userText, SkillTurnPlan plan) {
+        if (plan == null || plan.isPassthrough()) {
+            int systemTokens = defaultSystem == null ? 0 : tokenEstimator.estimate(defaultSystem);
+            int userTokens = userText == null ? 0 : tokenEstimator.estimate(userText);
+            return systemTokens + toolSchemaTokens + userTokens;
+        }
+        int systemTokens = plan.getSystemText() == null ? 0 : tokenEstimator.estimate(plan.getSystemText());
         int userTokens = userText == null ? 0 : tokenEstimator.estimate(userText);
-        return systemTokens + toolSchemaTokens + userTokens;
+        return systemTokens + estimateInstructionTokens(plan.getInstructionMessages())
+                + estimateToolSchemaTokens(plan.getTools()) + userTokens;
+    }
+
+    private SkillTurnPlan preparePlan(String userText) {
+        if (skillRuntime == null) {
+            return SkillTurnPlan.passthrough(tools);
+        }
+        return skillRuntime.prepare(userText, defaultSystem, tools);
+    }
+
+    private SkillActivation beginSkill(Span turnSpan, String sessionId, SkillTurnPlan plan) {
+        if (skillRuntime == null) {
+            return null;
+        }
+        return skillRuntime.begin(turnSpan.getSpanId(), sessionId, plan);
+    }
+
+    private ChatClient.ChatClientRequestSpec applySkill(ChatClient.ChatClientRequestSpec spec, SkillTurnPlan plan) {
+        if (plan == null || plan.isPassthrough()) {
+            if (!CollectionUtils.isEmpty(tools)) {
+                return spec.toolCallbacks(tools);
+            }
+            return spec;
+        }
+        ChatClient.ChatClientRequestSpec prepared = spec;
+        if (plan.getSystemText() != null) {
+            prepared = prepared.system(plan.getSystemText());
+        }
+        if (!CollectionUtils.isEmpty(plan.getInstructionMessages())) {
+            prepared = prepared.messages(plan.getInstructionMessages());
+        }
+        if (!CollectionUtils.isEmpty(plan.getTools())) {
+            prepared = prepared.toolCallbacks(plan.getTools());
+        }
+        return prepared;
+    }
+
+    private void finishSync(Span turnSpan, SkillActivation activation, boolean success) {
+        try {
+            if (skillRuntime != null) {
+                SkillDeactivateReasonEnum reason = success
+                        ? SkillDeactivateReasonEnum.COMPLETED : SkillDeactivateReasonEnum.ERROR;
+                skillRuntime.finish(activation, reason, success);
+            }
+        } finally {
+            closeSkill(turnSpan, activation);
+        }
+    }
+
+    private void finishStream(Span turnSpan, SkillActivation activation, SignalType signal) {
+        try {
+            if (skillRuntime != null) {
+                skillRuntime.finish(activation, deactivateReason(signal), signal == SignalType.ON_COMPLETE);
+            }
+        } finally {
+            closeSkill(turnSpan, activation);
+        }
+    }
+
+    private void closeSkill(Span turnSpan, SkillActivation activation) {
+        try {
+            if (skillRuntime != null) {
+                skillRuntime.close(activation);
+            }
+        } finally {
+            MemoryBudgetContextHolder.clear();
+            SpanContextHolder.clear();
+            recorder.endSpan(turnSpan.getSpanId());
+        }
+    }
+
+    private SkillDeactivateReasonEnum deactivateReason(SignalType signal) {
+        if (signal == SignalType.ON_COMPLETE) {
+            return SkillDeactivateReasonEnum.COMPLETED;
+        }
+        if (signal == SignalType.CANCEL) {
+            return SkillDeactivateReasonEnum.CANCELLED;
+        }
+        return SkillDeactivateReasonEnum.ERROR;
+    }
+
+    private Context turnContext(String sessionId, Span turnSpan, SkillActivation activation) {
+        String parentSpanId = turnSpan.getSpanId();
+        if (activation != null && activation.getParentSpanIdForCall() != null) {
+            parentSpanId = activation.getParentSpanIdForCall();
+        }
+        Context context = Context.of(
+                SpanContextHolder.CONTEXT_KEY_PARENT_SPAN_ID, parentSpanId,
+                SpanContextHolder.CONTEXT_KEY_SESSION_ID, sessionId);
+        if (activation != null && activation.getTraceBuffer() != null) {
+            context = context.put(SkillExecutionContext.CONTEXT_KEY, activation.getTraceBuffer());
+        }
+        return context;
+    }
+
+    private int estimateInstructionTokens(List<Message> messages) {
+        if (CollectionUtils.isEmpty(messages)) {
+            return 0;
+        }
+        int total = 0;
+        for (Message message : messages) {
+            total += tokenEstimator.estimate(message.getText());
+        }
+        return total;
     }
 
     /**
      * 估算一组工具的 schema token（name + description + inputSchema JSON）。
-     * 构造时一次性计算，避免每轮重复估算。
+     * 透传路径在构造时算一次；Skill 裁剪工具后按本轮工具重算。
      */
     private int estimateToolSchemaTokens(List<ToolCallback> callbacks) {
         if (CollectionUtils.isEmpty(callbacks)) {
