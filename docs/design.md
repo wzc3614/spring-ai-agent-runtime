@@ -1,7 +1,7 @@
 # Agent Runtime 设计文档
 
 > 版本：0.1（最小可用已跑通）
-> 最后更新：2026-10-25（单轮 ReAct 步数 / Token 预算；修正摘要、调用签名、观测与写入路径中的过时描述）
+> 最后更新：2026-10-25（单轮调用树页面；单轮 ReAct 步数 / Token 预算；修正摘要、调用签名、观测与写入路径中的过时描述）
 > 最后更新：2026-10-23（移除 HIL 人工审批模块）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并验证并行生效）
 
@@ -76,7 +76,7 @@ demo       端到端示例
 - `chat.CompactingChatMemoryFactory`/`Builder`：工厂 bean（方案 A）持有基础设施，用户只设 `chatModel`/`config`/`policyRegistry`。
 
 ### 4.4 observability（认知可观测）
-**分层**：捕获+日志永远在线，JDBC sink 条件装配，UI/OTLP 暂缓。
+**分层**：捕获+日志永远在线，JDBC sink 条件装配。Starter 提供默认关闭的只读文本树。完整 UI 与 OTLP 仍未做。
 
 - `api.observability.ObservabilityRecorder`/`ObservabilitySink`：端口。
 - `SpanTreeObservabilityRecorder`：建 Span/Event 树，pending map + UUID；**缓冲 event，span 结束时先 writeSpan 再 writeEvent**（保证 event 的 span FK）。
@@ -84,9 +84,10 @@ demo       端到端示例
 - `JdbcObservabilitySink`：同步落库 `agent_runtime_obs`（条件装配 DataSource，`mode=sync` 时启用）。
 - `RedisStreamObservabilitySink` + `ObservabilityStreamQueue` + `ObservabilityStreamConsumer`：`mode=async`（默认）异步通道，span/event 经 Redis Stream + 消费组 XADD/XREADGROUP/XACK 异步落库，失败重投 + DLQ，XCLAIM 接管宕机 consumer；FK 顺序靠 EVENT 落库前 `findById` 校验 + 重投兜底，DB `ON CONFLICT DO NOTHING` 保证幂等。
 - `JdbcSpanRepository`/`JdbcEventRepository`/`ObservabilityRowMappers`：span/event 仓储。
-- `ObservingChatModel`：包在 `BoundedToolCallingChatModel` 里面。循环的每一次模型调用各建一个 `MODEL_CALL`，从该次响应采集 `modelName/finishReason/inputTokens/outputTokens`。它看不到、也不限制整轮累计消耗。
+- `ObservingChatModel`：包在 `BoundedToolCallingChatModel` 里面。循环的每一次模型调用各建一个 `MODEL_CALL`，从该次响应采集 `modelName/finishReason/inputTokens/outputTokens`。主模型才记 `THINKING`。路由模型和摘要模型只记调用，不记推理。它看不到、也不限制整轮累计消耗。优先用响应里的 `reasoning_content`（Spring AI 1.0.0 不映射该字段，由 OpenAI 兼容客户端的同步/流式拦截器捡回）。没有这段、但回复同时带工具调用时，用工具旁边的正文。纯最终回答不记成思考过程。
 - `ObservabilityToolCallback`：包 `ToolCallback`（继承 `BaseToolCallbackDecorator`），每次调用建 `TOOL_CALL`（ToolCallSpan）+ `TOOL_INPUT`/`TOOL_OUTPUT` 事件，失败记 `ERROR`，span 属性带 `toolName`。
 - 父 span 与 sessionId 经 `SpanContextHolder` 透传。同步调用靠 `InheritableThreadLocal`；流式调用靠 context-propagation，reactor 线程上同样能建 span。
+- `trace.TraceTreeRenderer`：纯函数。输入会话、该会话的 span、每个 span 的 event。只展开一个 TURN 及其子孙，子节点按 `startedAt` 排序。`MODEL_CALL` 在这棵子树里按前序编号。展示模型名、结束原因、token、工具名、`TOOL_INPUT` / `TOOL_OUTPUT`、耗时、`ERROR`、`TURN_BUDGET_EXCEEDED`。工具入出参超过 200 字截断。`MODEL_CALL` 上的 `THINKING` 显示为 `thinking`，`TURN` 上的 `FINAL_REPLY` 显示为 `response`，这两行保留换行，超过 800 字截断。思考过程与最终回复正文相同时只保留 `response`。不展示费用。父 span 为空的压缩 span 不挂进这棵树。
 
 ### 4.5 工具结果压缩（并入 memory）
 工具原文存在 `agent_message.payload`（JSONB），不再使用对象存储。读路径按工具策略生成上下文视图：查询类过期后删除原文并留下可重新调用的短句，操作类完整保留并在会话摘要之后回捞，搜索类在当前轮之后换成确定性摘要。未注册工具默认按查询类过期。自定义策略实现 `ToolResultCompactor`。
@@ -96,6 +97,7 @@ demo       端到端示例
 - `runtime.AgentRuntimeBuilder`：装饰顺序是 `BoundedToolCallingChatModel` → `ObservingChatModel` → 原始 `ChatModel`，再挂 `MessageChatMemoryAdvisor`。单轮预算来自 `agent.runtime.turn-budget.max-model-calls`（默认 6）和 `max-turn-tokens`（默认 64000）。供应商未回 usage 时用 `TokenEstimator` 估算。触顶且仍要工具时返回固定回复，并在 TURN span 上记 `TURN_BUDGET_EXCEEDED`（`STEP_LIMIT` 或 `TOKEN_LIMIT`）。
 - `runtime.AgentRuntimeFactory`：工厂 bean，持有 `ToolCallingManager` 和 `TurnBudget`。
 - `autoconfigure.AgentRuntimeAutoConfiguration`：装配 JDBC repo、`TransactionPortImpl`、`LocalTokenEstimator`、`BudgetCalculator`、`ToolCompactionPolicyRegistry`、`MessageWritePolicy`、`MemoryWriteQueue`、`RedisSessionSeqProvider`、`MemoryWriteWorker`（`@EnableScheduling`）、`CompactingChatMemoryFactory`、`AgentRuntimeFactory`、observability 的 sink/recorder/jdbc 仓储。`TurnBudgetProperties` 在这里绑定。
+- `autoconfigure.TraceAutoConfiguration`：只读页面 `GET /agent-runtime/trace?sessionId=&turn=`。`agent.runtime.trace.enabled=true` 才注册，还要求 Web 应用和三个仓储都在。`spring-boot-starter-web` 是 starter 的 optional 依赖，不会传递给非 Web 接入方。未指定 `turn` 时展示该会话最近一轮，页面上保留其它轮的链接。演示时把 `agent-runtime.observability.persist.mode` 设为 `sync`，避免异步落库还没写完就打开页面。
 
 ### 4.7 demo
 `BusinessTool`（`@Tool`：`query_user_info`/`query_recent_orders`）、`DemoAgentService`（用工厂组装 `CompactingChatMemory` + `AgentRuntime`）、`DemoController`（`POST /chat`）、`application.yml`（PG/Redis/OpenAI）、`application-local.yml`（阿里云 qwen 兼容网关）。
@@ -140,6 +142,8 @@ AgentRuntime.call / stream
 ```
 落库 span 树：`SESSION → TURN → {MODEL_CALL, TOOL_CALL...}`。一次用户请求里可以有多个 `MODEL_CALL`，每个对应一步。event 含 `FINAL_REPLY` / `TOOL_INPUT` / `TOOL_OUTPUT` / `ERROR` / `TURN_BUDGET_EXCEEDED` / `COMPACTION_FAILED`，以及 Skill、轮次钩子相关事件。
 
+打开 `agent.runtime.trace.enabled=true` 后，`TraceTreeService` 读这棵已落库的树，`TraceTreeRenderer` 画成文本，`TraceController` 包进 HTML。页面只读，不新写表。
+
 ## 6. 数据模型
 
 业务表在 public schema（session / message / summary_snapshot / tool_call，外加 skill）。工具原文在 `agent_message.payload`。`agent_spill_record` 由 V7 删除。观测表在 `agent_runtime_obs`。命名统一 `snake_case` + `agent_` 前缀。
@@ -149,6 +153,6 @@ AgentRuntime.call / stream
 - M1 记忆与基础可观测 ✅（最小可用已跑通）
 - M2 工具结果压缩（已并入 memory）+ 能力供给中的 MCP（未做）
 - M3 摘要 + 并行调用 + 悬空修复。摘要已落地为结构化抽取 + 增量 rollup（不是九段式）。并行调用已接入，并由单轮步数 / token 预算包住。悬空检测类已有，尚未接入读路径
-- M5 可观测平台化（UI + OTLP，暂缓）
+- M5 可观测平台化。单轮文本树页面已由 Starter 提供，默认关闭。完整 UI 与 OTLP 仍未做
 
 详见 `docs/TODO.md`。

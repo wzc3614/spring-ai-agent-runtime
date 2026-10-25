@@ -18,6 +18,7 @@ package com.agentruntime.autoconfigure;
 import com.agentruntime.capability.skill.trace.SkillExecutionContext;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
+import com.agentruntime.observability.reasoning.ReasoningCapture;
 
 import io.micrometer.context.ContextRegistry;
 import jakarta.annotation.PostConstruct;
@@ -42,6 +43,7 @@ public class ReactorContextPropagationAutoConfiguration {
         SpanContextHolder.registerThreadLocalAccessors(ContextRegistry.getInstance());
         MemoryBudgetContextHolder.registerThreadLocalAccessor(ContextRegistry.getInstance());
         SkillExecutionContext.registerThreadLocalAccessor(ContextRegistry.getInstance());
+        ReasoningCapture.registerThreadLocalAccessor(ContextRegistry.getInstance());
         Hooks.enableAutomaticContextPropagation();
     }
 }

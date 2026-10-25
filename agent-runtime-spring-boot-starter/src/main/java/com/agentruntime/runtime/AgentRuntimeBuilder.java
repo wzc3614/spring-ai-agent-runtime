@@ -115,7 +115,8 @@ public class AgentRuntimeBuilder {
     public AgentRuntime build() {
         // 观测在内层：循环的每一步各建一个 MODEL_CALL span。
         // 预算在外层：关闭下游内部工具循环，按步数和累计 token 决定是否继续。
-        ChatModel observedChatModel = new ObservingChatModel(chatModel, factory.getRecorder(), factory.getObjectMapper());
+        ChatModel observedChatModel = new ObservingChatModel(chatModel, factory.getRecorder(),
+                factory.getObjectMapper(), true);
         ChatModel boundedChatModel = new BoundedToolCallingChatModel(observedChatModel,
                 factory.getToolCallingManager(), factory.getTurnBudget(), factory.getRecorder(),
                 factory.getTokenEstimator());

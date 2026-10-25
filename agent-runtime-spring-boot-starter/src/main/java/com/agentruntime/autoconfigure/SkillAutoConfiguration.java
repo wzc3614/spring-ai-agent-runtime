@@ -126,6 +126,7 @@ public class SkillAutoConfiguration {
         LlmSkillRouter llmRouter = null;
         ChatModel model = routerModel.getIfAvailable();
         if (properties.getRouter().isLlmEnabled() && model != null) {
+            // 路由模型只建 MODEL_CALL，不采集思考过程。三参构造默认关闭采集。
             ChatModel observed = model instanceof ObservingChatModel
                     ? model : new ObservingChatModel(model, recorder, objectMapper);
             llmRouter = new LlmSkillRouter(observed, objectMapper, topN);

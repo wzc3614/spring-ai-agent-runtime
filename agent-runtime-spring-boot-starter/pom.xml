@@ -46,6 +46,18 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-client-chat</artifactId>
         </dependency>
+        <!-- Optional: the trace page needs a servlet web app. Not transitive, so non-web users stay unchanged. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- Optional: streaming reasoning capture. Present when the app already uses WebClient. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 
 </project>

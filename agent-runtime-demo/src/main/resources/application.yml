@@ -43,6 +43,9 @@ agent:
     turn-budget:
       max-model-calls: 6
       max-turn-tokens: 64000
+    # 单次请求文本树，默认关闭。接入方打开：agent.runtime.trace.enabled=true
+    # 页面：GET /agent-runtime/trace?sessionId=&turn=
+    # 演示时把上面的 persist.mode 设为 sync，避免异步落库还没写完就打开页面。
     skill:
       enabled: true
       instruction-max-tokens: 2000

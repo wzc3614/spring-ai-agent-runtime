@@ -1,5 +1,6 @@
 # Agent Runtime 待办与状态
 
+> 最后更新：2026-10-25（Starter 提供默认关闭的单轮调用树页面 `/agent-runtime/trace`）
 > 最后更新：2026-10-24（工具结果压缩并入 Memory：PostgreSQL JSONB，查询/操作/搜索三类策略）
 > 最后更新：2026-10-23（移除 HIL 人工审批模块及其契约、表和待办）
 > 最后更新：2026-10-23（基础版 LLM 摘要记忆落地：异步压缩 + Compaction 角色 + ChatHistorySummarizer SPI；放弃九段式）
@@ -48,8 +49,8 @@
 - [x] D3 基础埋点接进调用链（SESSION/TURN + FINAL_REPLY；LlmCallSpan via ObservingChatModel 记 usage/finishReason；ToolCallSpan via ObservabilityToolCallback 记 TOOL_INPUT/OUTPUT；span 加 attributes）
 - [x] D3.1 日志异步写入：Redis Stream + 消费组（`RedisStreamObservabilitySink`/`ObservabilityStreamQueue`/`ObservabilityStreamConsumer`），`mode=async` 默认；失败重投 + DLQ + XCLAIM 接管；FK 顺序靠 `findById` 校验 + 重投 + `ON CONFLICT DO NOTHING` 幂等
 - [ ] D4 OpenTelemetry/OTLP 导出
-- [ ] D5 自建轻量可视化 Web UI
-- [ ] D6 查询 + ASCII 树渲染器 + REST（本期不做）
+- [ ] D5 完整可视化 Web UI（当前只有文本树）
+- [x] D6 单轮文本树：`TraceTreeRenderer` 画选中的 TURN；Starter 的 `GET /agent-runtime/trace` 默认关闭，`agent.runtime.trace.enabled=true` 才注册。不展示费用，工具入出参超过 200 字截断。`thinking` / `response` 保留换行，超过 800 字截断
 
 ### E. Capability（M2，未建）
 - [x] E1 Skill 加载（classpath + DB 动态，DB 覆盖同名）+ 关键词/轻量模型路由 + 渐进加载 + Skill 事件
