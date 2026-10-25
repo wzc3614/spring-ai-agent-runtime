@@ -54,7 +54,10 @@ public enum EventTypeEnum {
     SKILL_LOAD_BUDGET_EXCEEDED("SKILL_LOAD_BUDGET_EXCEEDED", "skill load budget exceeded"),
 
     /** 轮次被钩子提前结束，未调用模型 */
-    TURN_INTERRUPTED("TURN_INTERRUPTED", "turn interrupted");
+    TURN_INTERRUPTED("TURN_INTERRUPTED", "turn interrupted"),
+
+    /** 单轮步数或累计 token 触顶，停止继续调用工具 */
+    TURN_BUDGET_EXCEEDED("TURN_BUDGET_EXCEEDED", "turn budget exceeded");
 
     private final String code;
     private final String desc;

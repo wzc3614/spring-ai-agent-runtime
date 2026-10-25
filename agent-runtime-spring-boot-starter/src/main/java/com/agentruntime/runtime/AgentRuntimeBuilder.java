@@ -17,6 +17,7 @@ package com.agentruntime.runtime;
 
 import com.agentruntime.api.lifecycle.AgentLifecycleListener;
 import com.agentruntime.capability.skill.trace.SkillToolTraceCallback;
+import com.agentruntime.core.budget.BoundedToolCallingChatModel;
 import com.agentruntime.core.tool.ToolObjectResolver;
 import com.agentruntime.runtime.hook.TurnHook;
 import com.agentruntime.memory.chat.CompactingChatMemory;
@@ -30,6 +31,7 @@ import org.springframework.ai.tool.ToolCallback;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -111,10 +113,14 @@ public class AgentRuntimeBuilder {
      * @return AgentRuntime
      */
     public AgentRuntime build() {
-        // 包一层观测式 ChatModel：每次 LLM 调用建 LlmCallSpan + 记 usage
+        // 观测在内层：循环的每一步各建一个 MODEL_CALL span。
+        // 预算在外层：关闭下游内部工具循环，按步数和累计 token 决定是否继续。
         ChatModel observedChatModel = new ObservingChatModel(chatModel, factory.getRecorder(), factory.getObjectMapper());
-        ChatClient.Builder builder = ChatClient.builder(observedChatModel);
-        List<ToolCallback> resolvedTools = java.util.Collections.emptyList();
+        ChatModel boundedChatModel = new BoundedToolCallingChatModel(observedChatModel,
+                factory.getToolCallingManager(), factory.getTurnBudget(), factory.getRecorder(),
+                factory.getTokenEstimator());
+        ChatClient.Builder builder = ChatClient.builder(boundedChatModel);
+        List<ToolCallback> resolvedTools = Collections.emptyList();
         if (defaultSystem != null) {
             builder.defaultSystem(defaultSystem);
         }

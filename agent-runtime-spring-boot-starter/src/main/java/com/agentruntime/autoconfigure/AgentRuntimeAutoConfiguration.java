@@ -15,6 +15,7 @@
  */
 package com.agentruntime.autoconfigure;
 
+import com.agentruntime.api.budget.TurnBudget;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.observability.ObservabilitySink;
 import com.agentruntime.api.memory.MessageWritePolicy;
@@ -56,12 +57,14 @@ import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
 import com.agentruntime.runtime.hook.TurnPrepareExecutor;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -77,6 +80,7 @@ import java.util.List;
  */
 @AutoConfiguration
 @EnableScheduling
+@EnableConfigurationProperties(TurnBudgetProperties.class)
 @ConditionalOnClass({JdbcTemplate.class, StringRedisTemplate.class})
 public class AgentRuntimeAutoConfiguration {
 
@@ -209,10 +213,14 @@ public class AgentRuntimeAutoConfiguration {
                                                     com.agentruntime.core.tool.ToolGovernanceDefaults governanceDefaults,
                                                     TokenEstimator tokenEstimator,
                                                     ObjectProvider<SkillRuntime> skillRuntime,
-                                                    TurnPrepareExecutor turnPrepareExecutor) {
+                                                    TurnPrepareExecutor turnPrepareExecutor,
+                                                    ToolCallingManager toolCallingManager,
+                                                    TurnBudgetProperties turnBudgetProperties) {
+        TurnBudget turnBudget = turnBudgetProperties.toBudget();
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
                 toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator,
-                skillRuntime.getIfAvailable(), turnPrepareExecutor.getExecutor());
+                skillRuntime.getIfAvailable(), turnPrepareExecutor.getExecutor(),
+                toolCallingManager, turnBudget);
     }
 
     // ----- Observability -----

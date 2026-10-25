@@ -15,6 +15,7 @@
  */
 package com.agentruntime.runtime;
 
+import com.agentruntime.api.budget.TurnBudget;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.repository.SessionRepository;
 import com.agentruntime.api.spi.TokenEstimator;
@@ -24,6 +25,7 @@ import com.agentruntime.core.tool.ToolGovernanceDefaults;
 import com.agentruntime.core.tool.ToolMetaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.model.tool.ToolCallingManager;
 
 import java.util.concurrent.Executor;
 
@@ -53,13 +55,20 @@ public class AgentRuntimeFactory {
     /** Skill 准备与轮次钩子并行时使用的执行器 */
     private final Executor turnExecutor;
 
+    /** 一轮内的工具执行器。循环本身由 BoundedToolCallingChatModel 持有预算 */
+    private final ToolCallingManager toolCallingManager;
+
+    /** 单轮步数与累计 token 上限 */
+    private final TurnBudget turnBudget;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
                                ObservabilityRecorder recorder, ObjectMapper objectMapper,
                                ToolMetaRegistry toolMetaRegistry,
                                ToolFailureClassifier toolFailureClassifier,
                                ToolGovernanceDefaults governanceDefaults,
                                TokenEstimator tokenEstimator, SkillRuntime skillRuntime,
-                               Executor turnExecutor) {
+                               Executor turnExecutor, ToolCallingManager toolCallingManager,
+                               TurnBudget turnBudget) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
@@ -69,6 +78,8 @@ public class AgentRuntimeFactory {
         this.tokenEstimator = tokenEstimator;
         this.skillRuntime = skillRuntime;
         this.turnExecutor = turnExecutor;
+        this.toolCallingManager = toolCallingManager;
+        this.turnBudget = turnBudget;
     }
 
     /**
@@ -115,5 +126,13 @@ public class AgentRuntimeFactory {
 
     public Executor getTurnExecutor() {
         return turnExecutor;
+    }
+
+    public ToolCallingManager getToolCallingManager() {
+        return toolCallingManager;
+    }
+
+    public TurnBudget getTurnBudget() {
+        return turnBudget;
     }
 }

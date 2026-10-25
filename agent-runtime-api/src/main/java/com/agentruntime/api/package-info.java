@@ -32,6 +32,7 @@
  *       TransactionPort, ToolResultCompactor</li>
  *   <li>{@code lifecycle} &mdash; AgentLifecycleEvent, AgentLifecycleTypeEnum, AgentLifecycleListener</li>
  *   <li>{@code memory} &mdash; CompactConfig, ToolCompactionRule, ToolCompactionPolicyRegistry</li>
+ *   <li>{@code budget} &mdash; TurnBudget, single-turn model-call and token limits</li>
  *   <li>{@code exception} &mdash; AgentRuntimeException, OptimisticLockException</li>
  * </ul>
  */

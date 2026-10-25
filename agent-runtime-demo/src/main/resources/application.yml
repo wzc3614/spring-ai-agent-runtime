@@ -38,6 +38,11 @@ agent-runtime:
 # Skill：classpath 的 order-query 门控订单工具。未被 Skill 引用的工具保持常开。
 agent:
   runtime:
+    # 单轮 ReAct 预算。一步 = 一次模型调用；并行工具算同一步。
+    # 触顶且模型仍要调工具时停止，不再发起下一次模型调用。
+    turn-budget:
+      max-model-calls: 6
+      max-turn-tokens: 64000
     skill:
       enabled: true
       instruction-max-tokens: 2000
