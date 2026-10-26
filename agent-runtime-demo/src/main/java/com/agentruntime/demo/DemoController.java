@@ -15,7 +15,12 @@
  */
 package com.agentruntime.demo;
 
+import com.agentruntime.api.turn.TurnExecutionConstants;
+import com.agentruntime.runtime.turn.TurnHandle;
+
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -50,18 +55,26 @@ public class DemoController {
     }
 
     /**
-     * 流式对话端点（SSE），按 token 增量推送回复。
+     * 流式对话。响应头 {@code X-Turn-Id} 是这一轮，正文按 seq 推送帧。
      *
      * @param uid       用户 ID
      * @param sessionId  会话 ID
      * @param message    用户消息
-     * @return 回复 token 流
+     * @return SSE
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStream(@RequestParam String uid,
-                                   @RequestParam String sessionId,
-                                   @RequestParam String message) {
-        return agentService.chatStream(uid, sessionId, message);
+    public ResponseEntity<Flux<ServerSentEvent<String>>> chatStream(@RequestParam String uid,
+                                                                    @RequestParam String sessionId,
+                                                                    @RequestParam String message) {
+        TurnHandle handle = agentService.chatStream(uid, sessionId, message);
+        Flux<ServerSentEvent<String>> body = handle.frames().map(frame -> ServerSentEvent.builder(frame.getText())
+                .id(Long.toString(frame.getSeq()))
+                .event(frame.getType().getCode())
+                .build());
+        return ResponseEntity.ok()
+                .header(TurnExecutionConstants.HEADER_TURN_ID, handle.getTurnId())
+                .header(TurnExecutionConstants.HEADER_TURN_REUSED, Boolean.toString(handle.isReused()))
+                .body(body);
     }
 
     /**

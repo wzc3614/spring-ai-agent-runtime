@@ -29,6 +29,8 @@ import com.agentruntime.api.repository.SpanRepository;
 import com.agentruntime.api.repository.SummarySnapshotRepository;
 import com.agentruntime.api.repository.ToolCallRepository;
 import com.agentruntime.api.spi.TokenEstimator;
+import com.agentruntime.api.turn.TurnMessageDiscarder;
+import com.agentruntime.api.turn.TurnStore;
 import com.agentruntime.api.spi.TransactionPort;
 import com.agentruntime.observability.JdbcEventRepository;
 import com.agentruntime.observability.JdbcObservabilitySink;
@@ -53,9 +55,13 @@ import com.agentruntime.memory.write.AlwaysWritePolicy;
 import com.agentruntime.memory.write.MemoryWriteQueue;
 import com.agentruntime.memory.write.MemoryWriteWorker;
 import com.agentruntime.memory.write.RedisSessionSeqProvider;
+import com.agentruntime.memory.persistence.jdbc.JdbcTurnRepository;
+import com.agentruntime.memory.turn.QueuedTurnMessageDiscarder;
+import com.agentruntime.memory.turn.RedisTurnStore;
 import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
 import com.agentruntime.runtime.hook.TurnPrepareExecutor;
+import com.agentruntime.runtime.turn.TurnExecutionEngine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -72,6 +78,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
+import java.time.Clock;
 import java.util.List;
 
 /**
@@ -80,7 +87,7 @@ import java.util.List;
  */
 @AutoConfiguration
 @EnableScheduling
-@EnableConfigurationProperties(TurnBudgetProperties.class)
+@EnableConfigurationProperties({TurnBudgetProperties.class, TurnExecutionProperties.class})
 @ConditionalOnClass({JdbcTemplate.class, StringRedisTemplate.class})
 public class AgentRuntimeAutoConfiguration {
 
@@ -205,6 +212,36 @@ public class AgentRuntimeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public JdbcTurnRepository jdbcTurnRepository(JdbcTemplate jdbcTemplate) {
+        return new JdbcTurnRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TurnStore turnStore(StringRedisTemplate redisTemplate, JdbcTurnRepository jdbcTurnRepository,
+                               TurnExecutionProperties turnExecutionProperties) {
+        return new RedisTurnStore(redisTemplate, jdbcTurnRepository, Clock.systemUTC(),
+                turnExecutionProperties.getEventTtlSeconds(), turnExecutionProperties.getEventMaxLen());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TurnMessageDiscarder turnMessageDiscarder(MemoryWriteQueue memoryWriteQueue,
+                                                      MessageRepository messageRepository) {
+        return new QueuedTurnMessageDiscarder(memoryWriteQueue, messageRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TurnExecutionEngine turnExecutionEngine(TurnStore turnStore, TurnMessageDiscarder turnMessageDiscarder,
+                                                    TurnExecutionProperties turnExecutionProperties,
+                                                    TurnPrepareExecutor turnPrepareExecutor) {
+        return new TurnExecutionEngine(turnStore, turnMessageDiscarder, turnExecutionProperties,
+                turnPrepareExecutor.getExecutor(), Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public AgentRuntimeFactory agentRuntimeFactory(SessionRepository sessionRepository,
                                                     ObservabilityRecorder recorder,
                                                     ObjectMapper objectMapper,
@@ -215,12 +252,13 @@ public class AgentRuntimeAutoConfiguration {
                                                     ObjectProvider<SkillRuntime> skillRuntime,
                                                     TurnPrepareExecutor turnPrepareExecutor,
                                                     ToolCallingManager toolCallingManager,
-                                                    TurnBudgetProperties turnBudgetProperties) {
+                                                    TurnBudgetProperties turnBudgetProperties,
+                                                    TurnExecutionEngine turnExecutionEngine) {
         TurnBudget turnBudget = turnBudgetProperties.toBudget();
         return new AgentRuntimeFactory(sessionRepository, recorder, objectMapper,
                 toolMetaRegistry, toolFailureClassifier, governanceDefaults, tokenEstimator,
                 skillRuntime.getIfAvailable(), turnPrepareExecutor.getExecutor(),
-                toolCallingManager, turnBudget);
+                toolCallingManager, turnBudget, turnExecutionEngine);
     }
 
     // ----- Observability -----

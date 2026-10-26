@@ -27,13 +27,13 @@ import com.agentruntime.memory.chat.CompactingChatMemory;
 import com.agentruntime.memory.chat.CompactingChatMemoryFactory;
 import com.agentruntime.runtime.AgentRuntime;
 import com.agentruntime.runtime.AgentRuntimeFactory;
+import com.agentruntime.runtime.turn.TurnHandle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 
 /**
  * 演示 Agent 服务：用工厂 bean 组装 CompactingChatMemory + AgentRuntime。
@@ -145,15 +145,15 @@ public class DemoAgentService {
     }
 
     /**
-     * 发起流式对话，按 token 增量返回回复。
+     * 发起流式对话。响应头带 turnId，正文是带序号的帧。
      *
      * @param uid       用户 ID
      * @param sessionId  会话 ID
      * @param message    用户消息
-     * @return 回复 token 流
+     * @return 轮次句柄
      */
-    public Flux<String> chatStream(String uid, String sessionId, String message) {
-        return agent.stream(uid, sessionId, message);
+    public TurnHandle chatStream(String uid, String sessionId, String message) {
+        return agent.streamTurn(uid, sessionId, message);
     }
 
     /**

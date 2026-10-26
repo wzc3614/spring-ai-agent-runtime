@@ -228,6 +228,26 @@ public class MemoryWriteQueue {
     }
 
     /**
+     * 持锁删掉这一轮还在队列里的任务，并执行数据库删除。
+     *
+     * @param sessionId 会话
+     * @param turnId    轮次
+     * @param dbDelete  持锁期间的数据库清理
+     */
+    public void discardTurn(String sessionId, String turnId, Runnable dbDelete) {
+        for (int attempt = 1; attempt <= WriteQueueConstants.DISCARD_LOCK_ATTEMPTS; attempt++) {
+            if (tryWithWriteLock(sessionId, WriteQueueConstants.DEFAULT_LOCK_TTL_MILLIS, () -> {
+                removeTurnEntries(sessionId, turnId);
+                dbDelete.run();
+            })) {
+                return;
+            }
+            sleepBeforeDiscardRetry();
+        }
+        throw new IllegalStateException("write lock busy, sessionId=" + sessionId);
+    }
+
+    /**
      * 持有该 session 的写锁执行动作。没拿到锁时不执行。
      *
      * @param sessionId 会话 ID
@@ -342,6 +362,21 @@ public class MemoryWriteQueue {
                 WriteQueueConstants.queueKey(sessionId),
                 WriteQueueConstants.processingKey(sessionId),
                 WriteQueueConstants.PENDING_SET), sessionId);
+    }
+
+    private void removeTurnEntries(String sessionId, String turnId) {
+        removeMatching(WriteQueueConstants.processingKey(sessionId), turnId);
+        removeMatching(WriteQueueConstants.queueKey(sessionId), turnId);
+    }
+
+    private void removeMatching(String key, String turnId) {
+        List<String> raws = range(key);
+        for (String raw : raws) {
+            WriteTask task = readIfPossible(raw);
+            if (task != null && turnId.equals(task.getTurnId())) {
+                redis.opsForList().remove(key, 1, raw);
+            }
+        }
     }
 
     private List<String> range(String key) {

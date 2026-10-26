@@ -149,9 +149,22 @@ public class AgentRuntimeBuilder {
             builder.defaultAdvisors(MessageChatMemoryAdvisor.builder(memory).build());
         }
         ChatClient chatClient = builder.build();
-        return new AgentRuntime(chatClient, agentName, agentVersion, memory, listener,
-                factory.getSessionRepository(), factory.getRecorder(), resolvedTools,
-                defaultSystem, factory.getTokenEstimator(), factory.getSkillRuntime(),
-                turnHooks, factory.getTurnExecutor(), factory.getObjectMapper());
+        AgentRuntimeDependencies dependencies = new AgentRuntimeDependencies();
+        dependencies.setChatClient(chatClient);
+        dependencies.setAgentName(agentName);
+        dependencies.setAgentVersion(agentVersion);
+        dependencies.setMemory(memory);
+        dependencies.setListener(listener);
+        dependencies.setSessionRepository(factory.getSessionRepository());
+        dependencies.setRecorder(factory.getRecorder());
+        dependencies.setTools(resolvedTools);
+        dependencies.setDefaultSystem(defaultSystem);
+        dependencies.setTokenEstimator(factory.getTokenEstimator());
+        dependencies.setSkillRuntime(factory.getSkillRuntime());
+        dependencies.setTurnHooks(turnHooks);
+        dependencies.setTurnExecutor(factory.getTurnExecutor());
+        dependencies.setObjectMapper(factory.getObjectMapper());
+        dependencies.setTurnExecution(factory.getTurnExecutionEngine());
+        return new AgentRuntime(dependencies);
     }
 }

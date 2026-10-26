@@ -28,6 +28,7 @@ import com.agentruntime.api.repository.MessageRepository;
 import com.agentruntime.api.repository.SummarySnapshotRepository;
 import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
+import com.agentruntime.core.springai.TurnContextHolder;
 import com.agentruntime.memory.budget.BudgetCalculator;
 import com.agentruntime.memory.budget.BudgetResult;
 import com.agentruntime.memory.compaction.SummaryCompactor;
@@ -41,6 +42,7 @@ import com.agentruntime.memory.write.WriteTask;
 import com.agentruntime.memory.write.WriteTaskConverter;
 import com.agentruntime.memory.write.WriteTaskIdGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -117,7 +119,10 @@ public class CompactingChatMemory implements ChatMemory {
         // Spring AI ChatMemory 接口只传一个 id；编排器把 sessionId 作为 CONVERSATION_ID 传入，
         // 此处 memoryKey 即 sessionId（记忆按 session 共享）。
         String sessionId = conversationId;
-        String turnId = UUID.randomUUID().toString();
+        String turnId = TurnContextHolder.turnId();
+        if (StringUtils.isBlank(turnId)) {
+            turnId = UUID.randomUUID().toString();
+        }
         for (Message message : messages) {
             String roleCode = message.getMessageType().getValue();
             long seq = seqProvider.nextSeq(sessionId);
@@ -139,8 +144,8 @@ public class CompactingChatMemory implements ChatMemory {
         SummaryContent content = extractStructured(snapshot);
         boolean hasSummary = isUsable(content);
         long boundary = hasSummary ? snapshot.getSummarizedUpToSeq() : 0L;
-        List<AgentMessage> historyMessages = toolResultRenderer.render(
-                SessionHistory.loadForPrompt(messageRepository, writeQueue, sessionId, boundary), true);
+        List<AgentMessage> historyMessages = excludeCurrentTurn(toolResultRenderer.render(
+                SessionHistory.loadForPrompt(messageRepository, writeQueue, sessionId, boundary), true));
 
         // 预算判定 + 异步触发压缩（fire-and-forget，不阻塞）
         int summaryTokens = hasSummary ? tokenEstimator.estimate(new CompactionMessage(content).getText()) : 0;
@@ -240,6 +245,23 @@ public class CompactingChatMemory implements ChatMemory {
         }
         return !content.isStructuredEmpty()
                 || (content.getSummary() != null && !content.getSummary().isBlank());
+    }
+
+    /**
+     * 重跑期间 advisor 会再把当前 user 拼进 prompt。藏起这一轮已经写下的消息，避免进两次模型。
+     */
+    private List<AgentMessage> excludeCurrentTurn(List<AgentMessage> messages) {
+        String turnId = TurnContextHolder.turnId();
+        if (StringUtils.isBlank(turnId) || CollectionUtils.isEmpty(messages)) {
+            return messages;
+        }
+        List<AgentMessage> kept = new ArrayList<>(messages.size());
+        for (AgentMessage message : messages) {
+            if (!turnId.equals(message.getTurnId())) {
+                kept.add(message);
+            }
+        }
+        return kept;
     }
 
     private WriteTask newTask(String sessionId, String turnId, String messageId, long seq, String roleCode) {

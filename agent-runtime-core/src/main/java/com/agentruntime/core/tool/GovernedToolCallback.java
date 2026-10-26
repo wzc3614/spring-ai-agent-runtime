@@ -19,6 +19,7 @@ import com.agentruntime.api.domain.ToolCall;
 import com.agentruntime.api.enums.FailureCategoryEnum;
 import com.agentruntime.api.spi.ToolFailureClassifier;
 import com.agentruntime.core.springai.BaseToolCallbackDecorator;
+import com.agentruntime.core.springai.TurnToolStartHook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
@@ -79,6 +80,7 @@ public class GovernedToolCallback extends BaseToolCallbackDecorator {
         ToolDefinition toolDefinition = delegate().getToolDefinition();
         String toolName = toolDefinition.name();
         ToolMeta meta = metaRegistry.getMeta(toolName);
+        TurnToolStartHook.record(meta.isIdempotent());
         int attempts = resolveAttempts(meta);
         BackoffPolicy backoff = resolveBackoff(meta);
 

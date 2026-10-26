@@ -61,6 +61,9 @@ public class AgentRuntimeFactory {
     /** 单轮步数与累计 token 上限 */
     private final TurnBudget turnBudget;
 
+    /** 轮次执行。为空表示未装配 */
+    private final com.agentruntime.runtime.turn.TurnExecutionEngine turnExecutionEngine;
+
     public AgentRuntimeFactory(SessionRepository sessionRepository,
                                ObservabilityRecorder recorder, ObjectMapper objectMapper,
                                ToolMetaRegistry toolMetaRegistry,
@@ -68,7 +71,8 @@ public class AgentRuntimeFactory {
                                ToolGovernanceDefaults governanceDefaults,
                                TokenEstimator tokenEstimator, SkillRuntime skillRuntime,
                                Executor turnExecutor, ToolCallingManager toolCallingManager,
-                               TurnBudget turnBudget) {
+                               TurnBudget turnBudget,
+                               com.agentruntime.runtime.turn.TurnExecutionEngine turnExecutionEngine) {
         this.sessionRepository = sessionRepository;
         this.recorder = recorder;
         this.objectMapper = objectMapper;
@@ -80,6 +84,7 @@ public class AgentRuntimeFactory {
         this.turnExecutor = turnExecutor;
         this.toolCallingManager = toolCallingManager;
         this.turnBudget = turnBudget;
+        this.turnExecutionEngine = turnExecutionEngine;
     }
 
     /**
@@ -134,5 +139,9 @@ public class AgentRuntimeFactory {
 
     public TurnBudget getTurnBudget() {
         return turnBudget;
+    }
+
+    public com.agentruntime.runtime.turn.TurnExecutionEngine getTurnExecutionEngine() {
+        return turnExecutionEngine;
     }
 }

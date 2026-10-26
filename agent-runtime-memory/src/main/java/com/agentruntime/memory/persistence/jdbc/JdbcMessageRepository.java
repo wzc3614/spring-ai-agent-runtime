@@ -34,12 +34,13 @@ public class JdbcMessageRepository implements MessageRepository {
     private static final String JSON_NULL = "null";
 
     private static final String MESSAGE_COLUMNS =
-            "message_id, session_id, seq, role, content, compacted, evidence_id, payload, compaction_class, created_at";
+            "message_id, session_id, seq, role, content, compacted, evidence_id, payload, compaction_class, "
+                    + "turn_id, created_at";
 
     private static final String SQL_INSERT =
             "INSERT INTO agent_message (message_id, session_id, seq, role, content, compacted, evidence_id, "
-                    + "payload, compaction_class, created_at) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?) "
+                    + "payload, compaction_class, turn_id, created_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?) "
                     + "ON CONFLICT (session_id, seq) DO NOTHING";
 
     private static final String SQL_FIND_BY_SESSION =
@@ -78,6 +79,9 @@ public class JdbcMessageRepository implements MessageRepository {
     private static final String SQL_DELETE_BY_SESSION =
             "DELETE FROM agent_message WHERE session_id = ?";
 
+    private static final String SQL_DELETE_BY_SESSION_AND_TURN =
+            "DELETE FROM agent_message WHERE session_id = ? AND turn_id = ?";
+
     private final JdbcTemplate jdbcTemplate;
 
     public JdbcMessageRepository(JdbcTemplate jdbcTemplate) {
@@ -96,6 +100,7 @@ public class JdbcMessageRepository implements MessageRepository {
                 message.getEvidenceId(),
                 jsonb(message.getPayload()),
                 message.getCompactionClass(),
+                message.getTurnId(),
                 JdbcUtils.toTimestamp(message.getCreatedAt()));
     }
 
@@ -159,5 +164,10 @@ public class JdbcMessageRepository implements MessageRepository {
     @Override
     public int deleteBySession(String sessionId) {
         return jdbcTemplate.update(SQL_DELETE_BY_SESSION, sessionId);
+    }
+
+    @Override
+    public int deleteBySessionAndTurn(String sessionId, String turnId) {
+        return jdbcTemplate.update(SQL_DELETE_BY_SESSION_AND_TURN, sessionId, turnId);
     }
 }

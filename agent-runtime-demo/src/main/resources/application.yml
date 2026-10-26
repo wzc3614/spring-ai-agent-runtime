@@ -52,3 +52,13 @@ agent:
       router:
         top-n: 1
         llm-enabled: true
+    # 断线回放与崩溃整轮重跑。streamTurn 返回带 seq 的帧，X-Turn-Id 在响应头。
+    # 回放：GET /agent-runtime/sessions/{sessionId}/turns/{turnId}/events?afterSeq=&uid=
+    # 断开连接后默认继续跑完。cancel-on-client-disconnect 改成 true 会在最后一个订阅者离开时取消本轮。
+    turn-execution:
+      enabled: true
+      crash-recovery-enabled: true
+      cancel-on-client-disconnect: false
+      lease-ttl-millis: 30000
+      renew-interval-millis: 10000
+      recovery-interval-millis: 15000

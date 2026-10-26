@@ -120,4 +120,13 @@ public interface MessageRepository {
      * @return 受影响行数
      */
     int deleteBySession(String sessionId);
+
+    /**
+     * 删除某一轮已经落库的消息。整轮重跑前调用，避免同一句 user 留两份。
+     *
+     * @param sessionId 会话 ID
+     * @param turnId    轮次 ID
+     * @return 受影响行数
+     */
+    int deleteBySessionAndTurn(String sessionId, String turnId);
 }

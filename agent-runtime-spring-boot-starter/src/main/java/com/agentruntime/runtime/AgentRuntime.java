@@ -21,6 +21,9 @@ import com.agentruntime.api.enums.EventTypeEnum;
 import com.agentruntime.api.enums.SessionStatusEnum;
 import com.agentruntime.api.enums.SkillDeactivateReasonEnum;
 import com.agentruntime.api.enums.SpanTypeEnum;
+import com.agentruntime.api.enums.TurnFrameTypeEnum;
+import com.agentruntime.api.exception.TurnAccessException;
+import com.agentruntime.api.turn.TurnExecutionConstants;
 import com.agentruntime.capability.skill.SkillActivation;
 import com.agentruntime.capability.skill.SkillRuntime;
 import com.agentruntime.capability.skill.SkillTurnPlan;
@@ -38,8 +41,12 @@ import com.agentruntime.api.repository.SessionRepository;
 import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.core.springai.MemoryBudgetContextHolder;
 import com.agentruntime.core.springai.SpanContextHolder;
+import com.agentruntime.core.springai.TurnContextHolder;
 import com.agentruntime.memory.chat.CompactingChatMemory;
+import com.agentruntime.runtime.turn.TurnExecutionEngine;
+import com.agentruntime.runtime.turn.TurnHandle;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -57,6 +64,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
@@ -101,6 +109,9 @@ public class AgentRuntime {
 
     private final ObjectMapper objectMapper;
 
+    /** 轮次执行。为空或关闭时，call/stream 保持原来的行为 */
+    private final TurnExecutionEngine turnExecution;
+
     private final TurnHookGate turnHookGate = new TurnHookGate();
 
     /** 会话开始时间，用于计算 duration */
@@ -112,27 +123,31 @@ public class AgentRuntime {
     /** 会话级 SESSION span id */
     private final Map<String, String> sessionSpanIds = new ConcurrentHashMap<>();
 
-    public AgentRuntime(ChatClient chatClient, String agentName, String agentVersion,
-                        CompactingChatMemory memory, AgentLifecycleListener listener,
-                        SessionRepository sessionRepository, ObservabilityRecorder recorder,
-                        List<ToolCallback> tools, String defaultSystem, TokenEstimator tokenEstimator,
-                        SkillRuntime skillRuntime, List<TurnHook> turnHooks, Executor turnExecutor,
-                        ObjectMapper objectMapper) {
-        this.chatClient = chatClient;
-        this.agentName = agentName;
-        this.agentVersion = agentVersion;
-        this.memory = memory;
-        this.listener = listener;
-        this.sessionRepository = sessionRepository;
-        this.recorder = recorder;
-        this.tools = tools;
-        this.defaultSystem = defaultSystem;
-        this.tokenEstimator = tokenEstimator;
-        this.skillRuntime = skillRuntime;
-        this.turnHooks = turnHooks == null ? List.of() : List.copyOf(turnHooks);
-        this.turnExecutor = turnExecutor;
-        this.objectMapper = objectMapper;
-        this.toolSchemaTokens = estimateToolSchemaTokens(tools);
+    /**
+     * @param dependencies 运行依赖。钩子为 null 时按空列表处理
+     */
+    public AgentRuntime(AgentRuntimeDependencies dependencies) {
+        this.chatClient = dependencies.getChatClient();
+        this.agentName = dependencies.getAgentName();
+        this.agentVersion = dependencies.getAgentVersion();
+        this.memory = dependencies.getMemory();
+        this.listener = dependencies.getListener();
+        this.sessionRepository = dependencies.getSessionRepository();
+        this.recorder = dependencies.getRecorder();
+        this.tools = dependencies.getTools();
+        this.defaultSystem = dependencies.getDefaultSystem();
+        this.tokenEstimator = dependencies.getTokenEstimator();
+        this.skillRuntime = dependencies.getSkillRuntime();
+        List<TurnHook> hooks = dependencies.getTurnHooks();
+        this.turnHooks = hooks == null ? List.of() : List.copyOf(hooks);
+        this.turnExecutor = dependencies.getTurnExecutor();
+        this.objectMapper = dependencies.getObjectMapper();
+        this.turnExecution = dependencies.getTurnExecution();
+        this.toolSchemaTokens = estimateToolSchemaTokens(this.tools);
+        if (turnExecution != null && turnExecution.isEnabled()) {
+            turnExecution.register(agentName,
+                    (userId, sessionId, query) -> Flux.defer(() -> openStream(userId, sessionId, query)));
+        }
     }
 
     /**
@@ -144,6 +159,23 @@ public class AgentRuntime {
      * @return 模型回复
      */
     public String call(String uid, String sessionId, String userText) {
+        if (!executionEnabled()) {
+            return executeCall(uid, sessionId, userText);
+        }
+        prepareTurn(uid, sessionId, userText);
+        return turnExecution.call(agentName, uid, sessionId, userText,
+                () -> executeCall(uid, sessionId, userText));
+    }
+
+    /**
+     * 发起一次对话。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID（生命周期 + 记忆作用域，记忆跨调用共享累积）
+     * @param userText   用户输入
+     * @return 模型回复
+     */
+    private String executeCall(String uid, String sessionId, String userText) {
         ensureStarted(uid, sessionId);
         String sessionSpanId = sessionSpanIds.get(sessionId);
         Span turnSpan = recorder.startSpan(SpanTypeEnum.TURN, sessionSpanId, sessionId);
@@ -186,11 +218,43 @@ public class AgentRuntime {
      * @return 模型回复 token 流
      */
     public Flux<String> stream(String uid, String sessionId, String userText) {
-        return Flux.defer(() -> openStream(uid, sessionId, userText));
+        if (!executionEnabled()) {
+            return Flux.defer(() -> openStream(uid, sessionId, userText));
+        }
+        return streamTurn(uid, sessionId, userText).frames()
+                .filter(frame -> frame.getType() == TurnFrameTypeEnum.ANSWER)
+                .map(com.agentruntime.api.domain.TurnFrame::getText);
     }
 
     /**
-     * 流式轮次的同步前半段：钩子门闩通过后才把模型流交回去。
+     * 发起一次可回放的流式对话。轮次执行关闭时，帧只活在这次订阅里。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID
+     * @param userText   用户输入
+     * @return 带 turnId 的帧流
+     */
+    public TurnHandle streamTurn(String uid, String sessionId, String userText) {
+        if (!executionEnabled()) {
+            return TurnHandle.live(UUID.randomUUID().toString(),
+                    Flux.defer(() -> openStream(uid, sessionId, userText)));
+        }
+        prepareTurn(uid, sessionId, userText);
+        return turnExecution.open(agentName, uid, sessionId, userText,
+                (userId, ignoredSessionId, query) -> Flux.defer(() -> openStream(userId, ignoredSessionId, query)));
+    }
+
+    /**
+     * 发起一次流式对话，按 token 增量返回模型回复。
+     *
+     * <p>TURN span 在订阅时开始、在流终止（complete/error/cancel）时结束；完整回复累积后记为
+     * {@code FINAL_REPLY} 事件。span 上下文经 {@code contextWrite} 写入 Reactor Context，
+     * 配合自动上下文传播，工具装饰器在 reactor 线程上也能正确建 TOOL_CALL span。
+     *
+     * @param uid       用户 ID
+     * @param sessionId  会话 ID（生命周期 + 记忆作用域，记忆跨调用共享累积）
+     * @param userText   用户输入
+     * @return 模型回复 token 流
      */
     private Flux<String> openStream(String uid, String sessionId, String userText) {
         ensureStarted(uid, sessionId);
@@ -242,6 +306,29 @@ public class AgentRuntime {
         if (sessionSpanId != null) {
             recorder.endSpan(sessionSpanId);
         }
+    }
+
+    /**
+     * 轮次执行前校验 query 和会话归属。会话不存在时先按本次 uid 建出来。
+     */
+    private void prepareTurn(String uid, String sessionId, String userText) {
+        if (StringUtils.isBlank(userText)) {
+            throw new TurnAccessException(TurnExecutionConstants.ERROR_EMPTY_QUERY, "query must not be blank");
+        }
+        ensureStarted(uid, sessionId);
+        Optional<AgentSession> existing = sessionRepository.findById(sessionId);
+        if (existing.isEmpty()) {
+            return;
+        }
+        String owner = existing.get().getUserId();
+        if (StringUtils.isNotBlank(owner) && !owner.equals(uid)) {
+            throw new TurnAccessException(TurnExecutionConstants.ERROR_SESSION_UID_MISMATCH,
+                    "session does not belong to this uid");
+        }
+    }
+
+    private boolean executionEnabled() {
+        return turnExecution != null && turnExecution.isEnabled();
     }
 
     /**
@@ -428,6 +515,10 @@ public class AgentRuntime {
         Context context = Context.of(
                 SpanContextHolder.CONTEXT_KEY_PARENT_SPAN_ID, parentSpanId,
                 SpanContextHolder.CONTEXT_KEY_SESSION_ID, sessionId);
+        String turnId = TurnContextHolder.turnId();
+        if (turnId != null) {
+            context = context.put(TurnContextHolder.CONTEXT_KEY, turnId);
+        }
         if (activation != null && activation.getTraceBuffer() != null) {
             context = context.put(SkillExecutionContext.CONTEXT_KEY, activation.getTraceBuffer());
         }

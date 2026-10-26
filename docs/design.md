@@ -1,6 +1,7 @@
 # Agent Runtime 设计文档
 
 > 版本：0.1（最小可用已跑通）
+> 最后更新：2026-10-25（轮次执行：断线回放与崩溃整轮重跑）
 > 最后更新：2026-10-25（单轮调用树页面；单轮 ReAct 步数 / Token 预算；修正摘要、调用签名、观测与写入路径中的过时描述）
 > 最后更新：2026-10-23（移除 HIL 人工审批模块）
 > 最后更新：2026-10-17（Spring AI 1.0.0 GA；A7 接入 ParallelToolCallingManager 并验证并行生效）
@@ -93,7 +94,7 @@ demo       端到端示例
 工具原文存在 `agent_message.payload`（JSONB），不再使用对象存储。读路径按工具策略生成上下文视图：查询类过期后删除原文并留下可重新调用的短句，操作类完整保留并在会话摘要之后回捞，搜索类在当前轮之后换成确定性摘要。未注册工具默认按查询类过期。自定义策略实现 `ToolResultCompactor`。
 
 ### 4.6 starter（编排器 + 自动装配）
-- `runtime.AgentRuntime`：编排器入口。`call(uid, sessionId, userText)` / `stream(uid, sessionId, userText)` / `close(sessionId)`。`uid` 是用户，`sessionId` 是会话生命周期和记忆作用域。管 SESSION/TURN span、生命周期事件和 duration。
+- `runtime.AgentRuntime`：编排器入口。`call(uid, sessionId, userText)` / `stream(uid, sessionId, userText)` / `streamTurn(uid, sessionId, userText)` / `close(sessionId)`。`uid` 是用户，`sessionId` 是会话生命周期和记忆作用域。管 SESSION/TURN span、生命周期事件和 duration。轮次执行开启时，`streamTurn` 返回带 `turnId` 的帧流，`stream` 仍返回这段帧里的回答文本。
 - `runtime.AgentRuntimeBuilder`：装饰顺序是 `BoundedToolCallingChatModel` → `ObservingChatModel` → 原始 `ChatModel`，再挂 `MessageChatMemoryAdvisor`。单轮预算来自 `agent.runtime.turn-budget.max-model-calls`（默认 6）和 `max-turn-tokens`（默认 64000）。供应商未回 usage 时用 `TokenEstimator` 估算。触顶且仍要工具时返回固定回复，并在 TURN span 上记 `TURN_BUDGET_EXCEEDED`（`STEP_LIMIT` 或 `TOKEN_LIMIT`）。
 - `runtime.AgentRuntimeFactory`：工厂 bean，持有 `ToolCallingManager` 和 `TurnBudget`。
 - `autoconfigure.AgentRuntimeAutoConfiguration`：装配 JDBC repo、`TransactionPortImpl`、`LocalTokenEstimator`、`BudgetCalculator`、`ToolCompactionPolicyRegistry`、`MessageWritePolicy`、`MemoryWriteQueue`、`RedisSessionSeqProvider`、`MemoryWriteWorker`（`@EnableScheduling`）、`CompactingChatMemoryFactory`、`AgentRuntimeFactory`、observability 的 sink/recorder/jdbc 仓储。`TurnBudgetProperties` 在这里绑定。
@@ -109,13 +110,48 @@ Spring AI 1.0.0 GA 的工具调用管理器只有 `DefaultToolCallingManager`（
 - 观测不重写：`executeToolCalls` 调用的是 `options.getToolCallbacks()` 里已包装好的 `ObservabilityToolCallback`，并发下每个工具各自挂自己的 `TOOL_CALL` span 子树，`TOOL_INPUT`/`TOOL_OUTPUT` 天然仍生效。`SpanContextHolder` 的 ThreadLocal 值由虚拟线程继承，父 TURN spanId 透传不受影响。
 - `resolveToolDefinitions` 复用 `ToolCallbackResolver`，逻辑与默认实现一致（从 `options.getToolCallbacks()` 取包装回调 + 按 `toolNames` 解析）。
 
+### 4.9 轮次执行（断线回放与崩溃重跑）
+
+观测 span 负责事后复盘，`CompactingChatMemory` 负责进模型的权威历史。这两条都不提供「客户端从某个序号续上」或「进程死了把这一轮跑完」。轮次执行补的是执行协议，不另建一套会话原文，也不把摘要再做一遍。
+
+开关是 `agent.runtime.turn-execution.enabled`（默认开）。关掉时 `stream` 保持原来的 `Flux<String>`，执行跟着订阅者取消。打开时：
+
+- `streamTurn` 返回 `TurnHandle`：`turnId`、是否复用了未完成轮、以及帧流。帧类型只有 `ANSWER` / `DONE` / `ERROR` / `TURN_RESTARTED`。
+- `stream` 仍返回文本，内容是这些帧里的 `ANSWER`。取消这个文本流，等同于取消一次回放订阅。
+- `call` 碰到同一会话已有未完成轮时抛 `TurnBusyException`，异常上带已有 `turnId`，调用方改走回放。同步调用不在别人的轮次后面空等。
+- HTTP 适配把 `turnId` 放在响应头 `X-Turn-Id`，`X-Turn-Reused` 表示这次有没有复用。可选回放端点 `GET /agent-runtime/sessions/{sessionId}/turns/{turnId}/events?afterSeq=&uid=`，有 Web 才注册。
+
+三条状态继续分开：
+
+| 状态 | 落点 | 职责 |
+|---|---|---|
+| 会话 | 现有 `agent_session` | 用户与会话归属。`uid` 与 `user_id` 不一致则拒绝 |
+| 轮次 | Redis 哈希 + `agent_turn` | `ACCEPTED → RUNNING → COMPLETED / FAILED / CANCELLED`。租约只在 Redis |
+| 记忆 | 现有 `CompactingChatMemory` | 权威历史。本轮消息写入同一个执行 `turnId` |
+| 回放 | Redis Stream `agentruntime:turn:{turnId}:events` | 单调 `seq`，给客户端续传。默认保留 24 小时 |
+| 观测 | 现有 span / event | 不参与 `afterSeq` |
+
+同一会话只允许一个未完成轮。`begin` 在 Redis 里原子占住 `agentruntime:turn:active:{sessionId}`。撞上未完成轮时返回原 `turnId`，不追加第二条 user，也不再调模型。
+
+断线与执行拆开。模型调用跑在已有的虚拟线程执行器上，SSE 断开只结束这一次订阅。回答按条数或时间批量写入事件流，避免一个 token 一次 Redis。默认 `cancel-on-client-disconnect=false`：没有订阅者之后这一轮仍会跑完。打开该开关后，最后一个订阅者离开就把轮次标为 `CANCELLED`，并写一条 `ERROR`（`CLIENT_DISCONNECTED`）。这个默认会在用户关掉页面后继续消耗模型额度。
+
+崩溃后续跑整轮，不从半个 token 接着写。
+
+- 执行中的实例按 `renew-interval` 续租约，`BoundedToolCallingChatModel` 每一步开始时再续一次。续约和写事件都校验 `leaseOwner`，对不上就停，并且不再把这一轮标成完成。
+- 周期扫描本 agent 名下租约已过期的 `RUNNING`，以及创建时间已经超过一个租约 TTL 的 `ACCEPTED`（盖住「刚占住轮次就死了」的窗口，又不会抢走刚创建、还没标成 `RUNNING` 的轮）。CAS 认领成功后清空旧事件，先写 `TURN_RESTARTED`。
+- 认领后删掉这一轮已经写入记忆的消息（`agent_message.turn_id`，含队列里还没落库的），再按原 query 重跑。`MessageChatMemoryAdvisor` 是先 `get` 再把当前 user 拼进 prompt，所以重跑期间 `get` 会藏起当前 `turnId` 的消息，避免同一句 user 进两次模型。
+- 工具一开始执行就把幂等性记到 Redis。存在非幂等工具已开始时不重跑，轮次记 `FAILED`，错误码 `NON_IDEMPOTENT_PARTIAL`。默认工具元数据是非幂等，所以默认是失败关闭。
+- 没有 Redis 时不要打开恢复。`crash-recovery-enabled` 默认开，前提是本就依赖的 Redis 还在。
+
+`call` / `stream` 关掉轮次执行时，`CompactingChatMemory.add()` 仍为每次写入生成自己的 `turnId`，和现在一样。
+
 ## 5. 核心数据流
 
 ### 5.1 写入（异步、读写分离）
 ```
 AgentRuntime.call/stream → ChatClient(prompt+tools) → 模型回复
   ↓（MessageChatMemoryAdvisor.add）
-CompactingChatMemory.add: 编码 JSON 信封 → Redis 分配 seq（水位 = max(DB, 未落库队列)）→ 组装 WriteTask → MessageWritePolicy 判定 → MemoryWriteQueue
+CompactingChatMemory.add: 编码 JSON 信封 → Redis 分配 seq（水位 = max(DB, 未落库队列)）→ 组装 WriteTask（轮次执行开启时 turnId 用编排器这一轮的，并写入 agent_message.turn_id）→ MessageWritePolicy 判定 → MemoryWriteQueue
   ↓（@Scheduled, 异步）
 MemoryWriteWorker: 加分布式锁 → LMOVE 认领到处理中列表 → 提交成功后删除 → 同一 messageId 幂等，不同 messageId 撞 seq 则重分配 → 失败重投/超限 DLQ
 ```
@@ -144,9 +180,23 @@ AgentRuntime.call / stream
 
 打开 `agent.runtime.trace.enabled=true` 后，`TraceTreeService` 读这棵已落库的树，`TraceTreeRenderer` 画成文本，`TraceController` 包进 HTML。页面只读，不新写表。
 
+### 5.4 轮次执行
+```
+streamTurn / call
+  ├─ ensureStarted
+  ├─ begin（单飞；已有未完成轮则复用或 call 抛 TurnBusyException）
+  ├─ markRunning + leaseOwner
+  ├─ 虚拟线程执行模型调用（与 SSE 订阅者分离）
+  │    ├─ 批量 ANSWER → Redis Stream
+  │    ├─ 步边界与心跳续租约
+  │    └─ 非幂等工具开始即记 unsafe
+  ├─ COMPLETED + DONE，或 FAILED / CANCELLED + ERROR
+  └─ 客户端 afterSeq 跟随；进程重启后扫描过期租约，安全时整轮重跑
+```
+
 ## 6. 数据模型
 
-业务表在 public schema（session / message / summary_snapshot / tool_call，外加 skill）。工具原文在 `agent_message.payload`。`agent_spill_record` 由 V7 删除。观测表在 `agent_runtime_obs`。命名统一 `snake_case` + `agent_` 前缀。
+业务表在 public schema（session / message / summary_snapshot / tool_call / turn，外加 skill）。工具原文在 `agent_message.payload`。`agent_message.turn_id` 标记这一轮执行写下的消息，重跑前按它删除。`agent_spill_record` 由 V7 删除。观测表在 `agent_runtime_obs`。轮次租约和回放事件在 Redis，不进观测表。命名统一 `snake_case` + `agent_` 前缀。
 
 ## 7. 路线图
 
@@ -154,5 +204,6 @@ AgentRuntime.call / stream
 - M2 工具结果压缩（已并入 memory）+ 能力供给中的 MCP（未做）
 - M3 摘要 + 并行调用 + 悬空修复。摘要已落地为结构化抽取 + 增量 rollup（不是九段式）。并行调用已接入，并由单轮步数 / token 预算包住。悬空检测类已有，尚未接入读路径
 - M5 可观测平台化。单轮文本树页面已由 Starter 提供，默认关闭。完整 UI 与 OTLP 仍未做
+- M6 轮次执行。断线回放与崩溃整轮重跑已接入编排器。工具结果检查点、从 ReAct 中途续跑仍未做
 
 详见 `docs/TODO.md`。

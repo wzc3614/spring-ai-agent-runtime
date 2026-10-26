@@ -59,6 +59,7 @@ public final class AgentRowMappers {
                 message.setEvidenceId(rs.getString("evidence_id"));
                 message.setPayload(rs.getString("payload"));
                 message.setCompactionClass(rs.getString("compaction_class"));
+                message.setTurnId(rs.getString("turn_id"));
                 message.setCreatedAt(JdbcUtils.toInstant(rs.getTimestamp("created_at")));
                 return message;
             };

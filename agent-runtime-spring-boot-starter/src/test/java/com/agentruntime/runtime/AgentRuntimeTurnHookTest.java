@@ -173,8 +173,19 @@ class AgentRuntimeTurnHookTest {
         SessionRepository sessions = mock(SessionRepository.class);
         when(sessions.findById(any())).thenReturn(Optional.empty());
         when(sessions.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        return new AgentRuntime(chatClient, "DemoAgent", "1.0.0", null, null, sessions, recorder,
-                List.of(), null, tokenEstimator, skillRuntime, List.of(hook), executor, objectMapper);
+        AgentRuntimeDependencies dependencies = new AgentRuntimeDependencies();
+        dependencies.setChatClient(chatClient);
+        dependencies.setAgentName("DemoAgent");
+        dependencies.setAgentVersion("1.0.0");
+        dependencies.setSessionRepository(sessions);
+        dependencies.setRecorder(recorder);
+        dependencies.setTools(List.of());
+        dependencies.setTokenEstimator(tokenEstimator);
+        dependencies.setSkillRuntime(skillRuntime);
+        dependencies.setTurnHooks(List.of(hook));
+        dependencies.setTurnExecutor(executor);
+        dependencies.setObjectMapper(objectMapper);
+        return new AgentRuntime(dependencies);
     }
 
     private static final class RecordingRecorder implements ObservabilityRecorder {

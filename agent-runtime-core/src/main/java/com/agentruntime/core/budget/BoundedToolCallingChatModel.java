@@ -22,6 +22,7 @@ import com.agentruntime.api.enums.TurnBudgetReasonEnum;
 import com.agentruntime.api.observability.ObservabilityRecorder;
 import com.agentruntime.api.spi.TokenEstimator;
 import com.agentruntime.core.springai.SpanContextHolder;
+import com.agentruntime.core.springai.TurnLeaseHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -92,6 +93,7 @@ public class BoundedToolCallingChatModel implements ChatModel {
         Prompt current = disableInternalToolExecution(prompt);
         TurnLoopState state = new TurnLoopState();
         while (true) {
+            TurnLeaseHooks.renew();
             TurnBudgetReasonEnum blocked = exceededReason(state);
             if (blocked != null) {
                 return stop(state, blocked);
@@ -118,6 +120,7 @@ public class BoundedToolCallingChatModel implements ChatModel {
      * 这样最终回答仍按 token 流出，工具步骤不会把空片段或 tool call 送给订阅者。
      */
     private Flux<ChatResponse> streamFrom(Prompt prompt, TurnLoopState state) {
+        TurnLeaseHooks.renew();
         TurnBudgetReasonEnum blocked = exceededReason(state);
         if (blocked != null) {
             return Flux.just(stop(state, blocked));

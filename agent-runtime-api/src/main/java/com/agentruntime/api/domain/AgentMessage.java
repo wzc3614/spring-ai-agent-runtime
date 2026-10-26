@@ -58,6 +58,12 @@ public class AgentMessage {
      */
     private String compactionClass;
 
+    /**
+     * 执行轮次 ID。轮次执行开启时，同一轮的消息共用编排器发出的 turnId。
+     * 关闭时仍是写入路径自己生成的 ID，只用于幂等，不参与回放。
+     */
+    private String turnId;
+
     /** 创建时间 */
     private Instant createdAt;
 
@@ -131,6 +137,14 @@ public class AgentMessage {
 
     public void setCompactionClass(String compactionClass) {
         this.compactionClass = compactionClass;
+    }
+
+    public String getTurnId() {
+        return turnId;
+    }
+
+    public void setTurnId(String turnId) {
+        this.turnId = turnId;
     }
 
     public Instant getCreatedAt() {

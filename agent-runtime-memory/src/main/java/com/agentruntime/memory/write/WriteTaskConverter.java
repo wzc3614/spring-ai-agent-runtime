@@ -43,6 +43,7 @@ public final class WriteTaskConverter {
         message.setEvidenceId(task.getEvidenceId());
         message.setPayload(task.getPayload());
         message.setCompactionClass(task.getCompactionClass());
+        message.setTurnId(task.getTurnId());
         message.setCreatedAt(Instant.ofEpochMilli(task.getCreatedAtEpochMillis()));
         return message;
     }
