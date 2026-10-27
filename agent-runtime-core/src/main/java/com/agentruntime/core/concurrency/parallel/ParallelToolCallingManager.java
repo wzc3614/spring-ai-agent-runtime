@@ -289,16 +289,19 @@ public class ParallelToolCallingManager implements ToolCallingManager {
         return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
     }
 
+    /**
+     * 构造传给工具方法的上下文。
+     * {@code MethodToolCallback} 把空 map 当成没有 ToolContext，声明了该参数的方法会直接失败。
+     * 因此无论调用方有没有预置上下文，都写入本次调用历史，保证 map 非空。
+     */
     private static ToolContext buildToolContext(Prompt prompt, AssistantMessage assistantMessage) {
-        Map<String, Object> toolContextMap = Map.of();
-
+        Map<String, Object> toolContextMap = new HashMap<>();
         if (prompt.getOptions() instanceof ToolCallingChatOptions toolCallingChatOptions
                 && !CollectionUtils.isEmpty(toolCallingChatOptions.getToolContext())) {
-            toolContextMap = new HashMap<>(toolCallingChatOptions.getToolContext());
-            toolContextMap.put(ToolContext.TOOL_CALL_HISTORY,
-                    buildConversationHistoryBeforeToolExecution(prompt, assistantMessage));
+            toolContextMap.putAll(toolCallingChatOptions.getToolContext());
         }
-
+        toolContextMap.put(ToolContext.TOOL_CALL_HISTORY,
+                buildConversationHistoryBeforeToolExecution(prompt, assistantMessage));
         return new ToolContext(toolContextMap);
     }
 

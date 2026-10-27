@@ -27,6 +27,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.model.tool.DefaultToolCallingChatOptions;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 
 import java.util.ArrayList;
@@ -125,9 +127,8 @@ public class AgentRuntimeBuilder {
         if (defaultSystem != null) {
             builder.defaultSystem(defaultSystem);
         }
-        if (defaultOptions != null) {
-            builder.defaultOptions(defaultOptions);
-        }
+        // ChatClient 只在 options 实现 ToolCallingChatOptions 时才把本轮 toolCallbacks 写入 Prompt。
+        builder.defaultOptions(toolCapableOptions(defaultOptions));
         if (tools != null && tools.length > 0) {
             // 解析 + 包装：raw -> GovernedToolCallback(重试/分类) -> SkillToolTraceCallback -> ObservabilityToolCallback
             // 观测在最外层，一次逻辑工具调用对应一个 TOOL_CALL span，重试作为 span 内事件。
@@ -166,5 +167,37 @@ public class AgentRuntimeBuilder {
         dependencies.setObjectMapper(factory.getObjectMapper());
         dependencies.setTurnExecution(factory.getTurnExecutionEngine());
         return new AgentRuntime(dependencies);
+    }
+
+    /**
+     * 保证 ChatClient 的默认选项能携带工具回调。
+     * 未设置，或设置了通用 {@link ChatOptions} 时，工具定义进不了请求。
+     * 已经是 {@link ToolCallingChatOptions} 的原样保留。
+     *
+     * @param source 用户设置的默认选项，可以为空
+     * @return 可携带工具回调的选项
+     */
+    private ChatOptions toolCapableOptions(ChatOptions source) {
+        if (source instanceof ToolCallingChatOptions) {
+            return source;
+        }
+        DefaultToolCallingChatOptions options = new DefaultToolCallingChatOptions();
+        if (source == null) {
+            return options;
+        }
+        copyPortableOptions(source, options);
+        return options;
+    }
+
+    /** 把通用选项上的采样参数抄到可携带工具的选项上。 */
+    private void copyPortableOptions(ChatOptions source, DefaultToolCallingChatOptions target) {
+        target.setModel(source.getModel());
+        target.setFrequencyPenalty(source.getFrequencyPenalty());
+        target.setMaxTokens(source.getMaxTokens());
+        target.setPresencePenalty(source.getPresencePenalty());
+        target.setStopSequences(source.getStopSequences());
+        target.setTemperature(source.getTemperature());
+        target.setTopK(source.getTopK());
+        target.setTopP(source.getTopP());
     }
 }
